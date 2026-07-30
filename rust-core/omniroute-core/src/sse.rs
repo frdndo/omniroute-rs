@@ -1,7 +1,5 @@
 use axum::{
-    http::StatusCode,
     response::sse::{Event, KeepAlive, Sse},
-    response::{IntoResponse, Response},
 };
 use std::convert::Infallible;
 use tokio::sync::mpsc;
