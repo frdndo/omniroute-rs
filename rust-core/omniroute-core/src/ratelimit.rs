@@ -30,8 +30,7 @@ pub struct IpRateLimiter {
 
 impl IpRateLimiter {
     pub fn new(requests_per_minute: u64, max_buckets: usize) -> Self {
-        let quota = Quota::per_minute(requests_per_minute)
-            .unwrap_or_else(|_| Quota::per_minute(60).unwrap());
+        let quota = Quota::per_minute(requests_per_minute);
         Self {
             buckets: Arc::new(dashmap::DashMap::new()),
             max_buckets,
@@ -68,7 +67,7 @@ pub async fn rate_limit_middleware(request: Request, next: Next) -> Result<Respo
         .unwrap_or_else(|| "unknown".into());
 
     // Per-minute rate limiter for this IP
-    let quota = Quota::per_minute(60).unwrap_or_else(|_| Quota::per_minute(60).unwrap());
+    let quota = Quota::per_minute(60);
     let limiter = RateLimiter::direct(quota);
 
     if limiter.check().is_ok() {
