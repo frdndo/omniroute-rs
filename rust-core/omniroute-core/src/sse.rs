@@ -2,10 +2,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use std::convert::Infallible;
 use tokio::sync::mpsc;
-
-/// SSE event types
 #[derive(Debug, Clone)]
 pub enum SseEvent {
     Data(String),
@@ -21,25 +18,6 @@ pub struct SseStream {
 impl SseStream {
     pub fn new(rx: mpsc::Receiver<SseEvent>) -> Self {
         Self { rx }
-    }
-}
-
-impl Stream for SseStream {
-    type Item = Result<String, Infallible>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.rx.poll_recv(cx) {
-            Poll::Ready(Some(SseEvent::Data(data))) => {
-                Poll::Ready(Some(Ok(format!("data: {}\n\n", data))))
-            }
-            Poll::Ready(Some(SseEvent::Done)) => Poll::Ready(Some(Ok("data: [DONE]\n\n".into()))),
-            Poll::Ready(Some(SseEvent::Error(msg))) => Poll::Ready(Some(Ok(format!(
-                "data: [ERROR] {}\n\nevent: error\ndata: {}\n\n",
-                msg, msg
-            )))),
-            Poll::Ready(None) => Poll::Ready(None),
-            Poll::Pending => Poll::Pending,
-        }
     }
 }
 
