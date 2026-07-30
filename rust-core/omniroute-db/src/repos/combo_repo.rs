@@ -1,10 +1,10 @@
-use rusqlite::{params, Connection};
 use crate::models::Combo;
 use anyhow::Result;
+use rusqlite::{Connection, params};
 
 pub fn get_all(conn: &Connection) -> Result<Vec<Combo>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, kind, models, created_at, updated_at FROM combos ORDER BY name ASC"
+        "SELECT id, name, kind, models, created_at, updated_at FROM combos ORDER BY name ASC",
     )?;
     let rows = stmt.query_map([], |row| {
         let models_str: String = row.get(3)?;
@@ -17,7 +17,8 @@ pub fn get_all(conn: &Connection) -> Result<Vec<Combo>> {
             updated_at: row.get(5)?,
         })
     })?;
-    rows.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(Into::into)
 }
 
 pub fn insert(conn: &Connection, c: &Combo) -> Result<()> {

@@ -1,6 +1,6 @@
-use rusqlite::{params, Connection};
 use crate::models::Settings;
 use anyhow::Result;
+use rusqlite::{Connection, params};
 
 pub fn get(conn: &Connection) -> Result<Settings> {
     let mut stmt = conn.prepare("SELECT key, value FROM settings")?;
@@ -9,7 +9,10 @@ pub fn get(conn: &Connection) -> Result<Settings> {
         let v: String = row.get(1)?;
         Ok((k, v))
     })?;
-    let mut settings = Settings { password: None, jwt_secret: None };
+    let mut settings = Settings {
+        password: None,
+        jwt_secret: None,
+    };
     for row in rows {
         let (k, v) = row?;
         match k.as_str() {

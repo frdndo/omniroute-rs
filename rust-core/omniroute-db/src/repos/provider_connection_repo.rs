@@ -1,6 +1,6 @@
-use rusqlite::{params, Connection};
 use crate::models::ProviderConnection;
 use anyhow::Result;
+use rusqlite::{Connection, params};
 
 pub fn get_all(conn: &Connection) -> Result<Vec<ProviderConnection>> {
     let mut stmt = conn.prepare(
@@ -23,7 +23,8 @@ pub fn get_all(conn: &Connection) -> Result<Vec<ProviderConnection>> {
             updated_at: row.get(10)?,
         })
     })?;
-    rows.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(Into::into)
 }
 
 pub fn get_by_id(conn: &Connection, id: &str) -> Result<Option<ProviderConnection>> {
@@ -71,8 +72,15 @@ pub fn update(conn: &Connection, c: &ProviderConnection) -> Result<()> {
          is_active=?7, priority=?8, data=?9, updated_at=datetime('now')
          WHERE id=?1",
         params![
-            c.id, c.provider, c.auth_type, c.name, c.email, c.api_key,
-            c.is_active as i32, c.priority, serde_json::to_string(&c.data)?
+            c.id,
+            c.provider,
+            c.auth_type,
+            c.name,
+            c.email,
+            c.api_key,
+            c.is_active as i32,
+            c.priority,
+            serde_json::to_string(&c.data)?
         ],
     )?;
     Ok(())
