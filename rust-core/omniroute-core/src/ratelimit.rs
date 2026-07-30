@@ -9,10 +9,9 @@ use axum::{
     response::Response,
 };
 use governor::{
-    RateLimiter,
+    Quota, RateLimiter,
     clock::DefaultClock,
     middleware::NoOpMiddleware,
-    quota::Quota,
     state::{InMemoryState, NotKeyed},
 };
 use once_cell::sync::Lazy;

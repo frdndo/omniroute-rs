@@ -2,12 +2,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use futures::stream::Stream;
-use std::{
-    convert::Infallible,
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::convert::Infallible;
 use tokio::sync::mpsc;
 
 /// SSE event types
@@ -50,15 +45,28 @@ impl Stream for SseStream {
 
 impl IntoResponse for SseStream {
     fn into_response(self) -> Response {
+        let stream = futures::stream::unfold(self, |mut s| async {
+            match s.rx.recv().await {
+                Some(SseEvent::Data(data)) => Some((Ok(format!("data: {}\n\n", data)), s)),
+                Some(SseEvent::Done) => Some((Ok("data: [DONE]\n\n".into()), s)),
+                Some(SseEvent::Error(msg)) => Some((
+                    Ok(format!(
+                        "data: [ERROR] {}\n\nevent: error\ndata: {}\n\n",
+                        msg, msg
+                    )),
+                    s,
+                )),
+                None => None,
+            }
+        });
+
         Response::builder()
             .header("Content-Type", "text/event-stream")
             .header("Cache-Control", "no-cache")
             .header("Connection", "keep-alive")
             .header("X-Accel-Buffering", "no")
             .status(StatusCode::OK)
-            .body(axum::body::Body::from_stream(
-                self.map(|r| r.unwrap_or_default()),
-            ))
+            .body(axum::body::Body::from_stream(stream))
             .unwrap()
     }
 }

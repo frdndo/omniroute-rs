@@ -45,6 +45,22 @@ pub enum Content {
     Parts(Vec<ContentPart>),
 }
 
+impl std::fmt::Display for Content {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Content::Text(t) => write!(f, "{}", t),
+            Content::Parts(parts) => {
+                for p in parts {
+                    if let Some(text) = &p.text {
+                        write!(f, "{}", text)?;
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContentPart {
     #[serde(skip_serializing_if = "Option::is_none")]
