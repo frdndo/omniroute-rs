@@ -1,6 +1,3 @@
-use std::sync::Arc;
-use std::time::Duration;
-
 use axum::{
     Router,
     extract::Request,
@@ -8,45 +5,55 @@ use axum::{
     middleware::{self, Next},
     response::Response,
 };
-use governor::{
-    Quota, RateLimiter,
-    clock::DefaultClock,
-    middleware::NoOpMiddleware,
-    state::{InMemoryState, NotKeyed},
-};
-use once_cell::sync::Lazy;
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::Instant;
 
-/// IP-based rate limiter using the governor crate
+/// Simple per-IP rate limiter using sliding window
 pub struct IpRateLimiter {
-    buckets: Arc<
-        dashmap::DashMap<
-            String,
-            RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>,
-        >,
-    >,
-    max_buckets: usize,
-    quota: Quota,
+    buckets: Mutex<HashMap<String, Vec<Instant>>>,
+    max_requests: usize,
+    window_secs: u64,
+    max_ips: usize,
 }
 
 impl IpRateLimiter {
-    pub fn new(requests_per_minute: u64, max_buckets: usize) -> Self {
-        let quota = Quota::per_minute(requests_per_minute);
+    pub fn new(max_requests: usize, window_secs: u64, max_ips: usize) -> Self {
         Self {
-            buckets: Arc::new(dashmap::DashMap::new()),
-            max_buckets,
-            quota,
+            buckets: Mutex::new(HashMap::new()),
+            max_requests,
+            window_secs,
+            max_ips,
         }
     }
 
     pub fn check(&self, ip: &str) -> bool {
-        if self.buckets.len() >= self.max_buckets {
-            self.buckets.clear();
+        let now = Instant::now();
+        let mut buckets = self.buckets.lock().unwrap();
+
+        // Evict old entries
+        if buckets.len() >= self.max_ips {
+            buckets.clear();
         }
-        self.buckets
-            .entry(ip.to_string())
-            .or_insert_with(|| RateLimiter::direct(self.quota))
-            .check()
-            .is_ok()
+
+        // Remove expired timestamps
+        let window = std::time::Duration::from_secs(self.window_secs);
+        let timestamps = buckets.entry(ip.to_string()).or_insert_with(Vec::new);
+        timestamps.retain(|t| now.duration_since(*t) < window);
+
+        // Check rate limit
+        if timestamps.len() >= self.max_requests {
+            false
+        } else {
+            timestamps.push(now);
+            true
+        }
+    }
+}
+
+impl Default for IpRateLimiter {
+    fn default() -> Self {
+        Self::new(60, 60, 10000)
     }
 }
 
@@ -66,11 +73,8 @@ pub async fn rate_limit_middleware(request: Request, next: Next) -> Result<Respo
         })
         .unwrap_or_else(|| "unknown".into());
 
-    // Per-minute rate limiter for this IP
-    let quota = Quota::per_minute(60);
-    let limiter = RateLimiter::direct(quota);
-
-    if limiter.check().is_ok() {
+    let limiter = IpRateLimiter::default();
+    if limiter.check(&ip) {
         Ok(next.run(request).await)
     } else {
         Err(StatusCode::TOO_MANY_REQUESTS)
@@ -87,21 +91,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_rate_limiter_accepts_first() {
-        let limiter = IpRateLimiter::new(1000, 100);
+    fn test_accepts_first() {
+        let limiter = IpRateLimiter::new(100, 60, 100);
         assert!(limiter.check("127.0.0.1"));
     }
 
     #[test]
-    fn test_rate_limiter_different_ips() {
-        let limiter = IpRateLimiter::new(5, 100);
+    fn test_different_ips() {
+        let limiter = IpRateLimiter::new(5, 60, 100);
         assert!(limiter.check("1.1.1.1"));
         assert!(limiter.check("2.2.2.2"));
     }
 
     #[test]
-    fn test_rate_limiter_blocks_after_limit() {
-        let limiter = IpRateLimiter::new(3, 100);
+    fn test_blocks_after_limit() {
+        let limiter = IpRateLimiter::new(3, 60, 100);
         assert!(limiter.check("10.0.0.1"));
         assert!(limiter.check("10.0.0.1"));
         assert!(limiter.check("10.0.0.1"));
@@ -109,10 +113,10 @@ mod tests {
     }
 
     #[test]
-    fn test_rate_limiter_eviction() {
-        let limiter = IpRateLimiter::new(1, 2);
+    fn test_eviction() {
+        let limiter = IpRateLimiter::new(1, 60, 2);
         assert!(limiter.check("1.1.1.1"));
         assert!(limiter.check("2.2.2.2"));
-        assert!(limiter.check("3.3.3.3"));
+        assert!(limiter.check("3.3.3.3")); // triggers eviction
     }
 }
