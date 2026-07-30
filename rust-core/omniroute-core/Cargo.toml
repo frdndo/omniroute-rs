@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "lib"]
 
 [dependencies]
 omniroute-db = { path = "../omniroute-db" }
@@ -19,3 +19,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror.workspace = true
 once_cell.workspace = true
 config = "0.14"
+dashmap.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+governor.workspace = true
+futures.workspace = true
+uuid.workspace = true
+chrono.workspace = true
