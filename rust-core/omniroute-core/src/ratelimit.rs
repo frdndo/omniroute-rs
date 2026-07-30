@@ -8,8 +8,6 @@ use axum::{
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Instant;
-
-/// Simple per-IP rate limiter using sliding window
 pub struct IpRateLimiter {
     buckets: Mutex<HashMap<String, Vec<Instant>>>,
     max_requests: usize,
