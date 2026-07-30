@@ -36,7 +36,7 @@ impl IpRateLimiter {
 
         // Remove expired timestamps
         let window = std::time::Duration::from_secs(self.window_secs);
-        let timestamps = buckets.entry(ip.to_string()).or_insert_with(Vec::new);
+        let timestamps = buckets.entry(ip.to_string()).or_default();
         timestamps.retain(|t| now.duration_since(*t) < window);
 
         // Check rate limit

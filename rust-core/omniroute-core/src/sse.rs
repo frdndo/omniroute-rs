@@ -42,7 +42,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_sse_channel() {
-        let (tx, sse) = sse_channel();
+        let (tx, _sse) = sse_channel();
         tx.send(SseEvent::Data("test".into())).await.unwrap();
         tx.send(SseEvent::Done).await.unwrap();
         // Sse implements IntoResponse, verified via type check
