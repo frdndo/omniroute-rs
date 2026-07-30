@@ -1,0 +1,20 @@
+{
+  "name": "omniroute-core",
+  "version": "0.1.0",
+  "main": "index.js",
+  "napi": {
+    "name": "omniroute-core",
+    "triples": {
+      "defaults": true
+    }
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.0.0"
+  },
+  "scripts": {
+    "artifacts": "napi artifacts",
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform",
+    "prepublishOnly": "napi prepublish -t npm"
+  }
+}

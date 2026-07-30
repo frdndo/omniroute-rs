@@ -14,11 +14,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable
-          components: clippy, rustfmt
-
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -30,31 +25,29 @@ jobs:
 
       - name: Check fmt
         run: cargo fmt --all --check
+        working-directory: rust-core
 
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
+        working-directory: rust-core
 
       - name: Build
         run: cargo build --release
+        working-directory: rust-core
 
       - name: Test
         run: cargo test
+        working-directory: rust-core
 
       - name: Audit
         run: cargo audit
-        continue-on-error: true  # audit may fail if no advisory db cached
+        continue-on-error: true
+        working-directory: rust-core
 
   napi-build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: rust-core
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable
 
       - uses: actions/setup-node@v4
         with:
@@ -62,9 +55,11 @@ jobs:
 
       - name: Install napi-rs
         run: npm install -g @napi-rs/cli
+        working-directory: rust-core/omniroute-core
 
       - name: Build N-API
-        run: cd omniroute-core && napi build --platform --release
+        run: napi build --platform --release
+        working-directory: rust-core/omniroute-core
 
       - name: Upload N-API artifact
         uses: actions/upload-artifact@v4
