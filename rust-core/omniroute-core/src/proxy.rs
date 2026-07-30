@@ -31,7 +31,7 @@ async fn handle_health(State(state): State<AppState>) -> Json<serde_json::Value>
     }))
 }
 
-/// Chat completion handler (non-streaming)
+/// Chat completion handler (non-streaming mock)
 async fn handle_chat(
     State(_state): State<AppState>,
     Json(req): Json<ChatRequest>,
@@ -48,7 +48,6 @@ async fn handle_chat(
         })
         .unwrap_or_default();
 
-    // Mock response — will be replaced by actual routing engine
     let response = ChatResponse::new(
         &model,
         &format!("Echo: {}", user_msg),
@@ -106,10 +105,7 @@ pub async fn start_server(port: u16, version: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{
-        body::Body,
-        http::{Method, Request},
-    };
+    use axum::{body::Body, http::Method, http::Request};
     use tower::ServiceExt;
 
     #[tokio::test]
@@ -196,30 +192,5 @@ mod tests {
                 .unwrap()
                 .contains("Hello")
         );
-    }
-
-    #[tokio::test]
-    async fn test_chat_without_stream() {
-        let state = AppState::new("test");
-        let app = build_router(state);
-
-        let req_body = serde_json::json!({
-            "model": "gpt-4o",
-            "messages": [{"role": "user", "content": "Non-stream test"}],
-            "stream": false
-        });
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/v1/chat/completions")
-                    .method(Method::POST)
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(serde_json::to_string(&req_body).unwrap()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
     }
 }

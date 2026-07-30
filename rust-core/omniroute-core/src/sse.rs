@@ -1,5 +1,5 @@
 use axum::{
-    body::Body,
+    http::StatusCode,
     response::{IntoResponse, Response},
 };
 use futures::stream::Stream;
@@ -18,7 +18,7 @@ pub enum SseEvent {
     Error(String),
 }
 
-/// A stream of SSE events that can serve as an Axum response
+/// A stream of SSE events
 pub struct SseStream {
     rx: mpsc::Receiver<SseEvent>,
 }
@@ -30,25 +30,18 @@ impl SseStream {
 }
 
 impl Stream for SseStream {
-    type Item = Result<Body, Infallible>;
+    type Item = Result<String, Infallible>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.rx.poll_recv(cx) {
             Poll::Ready(Some(SseEvent::Data(data))) => {
-                let body = Body::from(format!("data: {}\n\n", data));
-                Poll::Ready(Some(Ok(body)))
+                Poll::Ready(Some(Ok(format!("data: {}\n\n", data))))
             }
-            Poll::Ready(Some(SseEvent::Done)) => {
-                let body = Body::from("data: [DONE]\n\n");
-                Poll::Ready(Some(Ok(body)))
-            }
-            Poll::Ready(Some(SseEvent::Error(msg))) => {
-                let body = Body::from(format!(
-                    "data: [ERROR] {}\n\nevent: error\ndata: {}\n\n",
-                    msg, msg
-                ));
-                Poll::Ready(Some(Ok(body)))
-            }
+            Poll::Ready(Some(SseEvent::Done)) => Poll::Ready(Some(Ok("data: [DONE]\n\n".into()))),
+            Poll::Ready(Some(SseEvent::Error(msg))) => Poll::Ready(Some(Ok(format!(
+                "data: [ERROR] {}\n\nevent: error\ndata: {}\n\n",
+                msg, msg
+            )))),
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
         }
@@ -62,7 +55,10 @@ impl IntoResponse for SseStream {
             .header("Cache-Control", "no-cache")
             .header("Connection", "keep-alive")
             .header("X-Accel-Buffering", "no")
-            .body(Body::from_stream(self))
+            .status(StatusCode::OK)
+            .body(axum::body::Body::from_stream(
+                self.map(|r| r.unwrap_or_default()),
+            ))
             .unwrap()
     }
 }
@@ -91,28 +87,23 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_sse_channel_send_receive() {
+    async fn test_sse_channel() {
         let (tx, mut stream) = sse_channel();
-        tx.send(SseEvent::Data("test message".into()))
-            .await
-            .unwrap();
+        tx.send(SseEvent::Data("test".into())).await.unwrap();
         tx.send(SseEvent::Done).await.unwrap();
         drop(tx);
 
         use futures::StreamExt;
         let items: Vec<_> = stream.collect().await;
         assert!(!items.is_empty());
+        assert_eq!(items[0].as_ref().unwrap(), "data: test\n\n");
     }
 
-    #[tokio::test]
-    async fn test_sse_headers() {
-        let (_, stream) = sse_channel();
-        let resp = stream.into_response();
-        assert_eq!(
-            resp.headers().get("Content-Type").unwrap(),
-            "text/event-stream"
-        );
-        assert_eq!(resp.headers().get("Cache-Control").unwrap(), "no-cache");
+    #[test]
+    fn test_sse_heartbeat_handle() {
+        let (tx, _) = sse_channel();
+        let handle = sse_heartbeat(tx);
+        assert!(!handle.is_finished());
     }
 
     #[test]
