@@ -259,7 +259,7 @@ mod tests {
         let req: ChatRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.model, "gpt-4o");
         assert_eq!(req.messages.len(), 1);
-        assert_eq!(req.is_streaming(), true);
+        assert!(req.is_streaming());
     }
 
     #[test]
