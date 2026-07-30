@@ -1,6 +1,4 @@
-use axum::{
-    response::sse::{Event, KeepAlive, Sse},
-};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use std::convert::Infallible;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
