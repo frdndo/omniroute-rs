@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use tracing::info;
 pub struct Database {
-    conn: Mutex<Connection>,
+    pub conn: Mutex<Connection>,
 }
 impl Database {
     pub fn open(path: &Path) -> Result<Self, anyhow::Error> {
