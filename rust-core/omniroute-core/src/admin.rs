@@ -155,6 +155,9 @@ pub async fn create_provider_connection(
     })
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
+    // Pick up the new connection in routing immediately
+    state.reload_accounts();
+
     Ok((StatusCode::CREATED, Json(json!({ "id": id }))))
 }
 
@@ -188,6 +191,7 @@ pub async fn update_provider_connection(
     })
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
+    state.reload_accounts();
     Ok(Json(json!({ "ok": true, "id": id })))
 }
 
@@ -199,6 +203,7 @@ pub async fn delete_provider_connection(
         provider_connection_repo::delete(c, &id).map_err(|e| e.to_string())
     })
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    state.reload_accounts();
     Ok(Json(json!({ "ok": true, "id": id })))
 }
 
@@ -259,6 +264,7 @@ pub async fn delete_api_key(
         api_key_repo::delete(c, &id).map_err(|e| e.to_string())
     })
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    state.reload_accounts();
     Ok(Json(json!({ "ok": true, "id": id })))
 }
 

@@ -14,7 +14,7 @@ use crate::router::{RouterConfig, RoutingEngine};
 pub struct AppState {
     pub started_at: chrono::DateTime<chrono::Utc>,
     pub version: String,
-    pub combo: ComboEngine,
+    pub combo: std::sync::Arc<tokio::sync::RwLock<ComboEngine>>,
     pub gateway_keys: GatewayKeys,
     pub allowed_hosts: AllowedHosts,
     pub admin_keys: crate::admin::AdminKeys,
@@ -27,7 +27,9 @@ impl AppState {
         Self {
             started_at: chrono::Utc::now(),
             version: version.to_string(),
-            combo: ComboEngine::new(RoutingEngine::new(RouterConfig::default())),
+            combo: std::sync::Arc::new(tokio::sync::RwLock::new(ComboEngine::new(
+                RoutingEngine::new(RouterConfig::default()),
+            ))),
             gateway_keys: GatewayKeys::default(),
             allowed_hosts: AllowedHosts::default(),
             admin_keys: crate::admin::AdminKeys::default(),
@@ -36,8 +38,26 @@ impl AppState {
         }
     }
 
+    /// Rebuild the routing engine from env config + DB connections.
+    /// Call after admin CRUD so new connections take effect immediately
+    /// (matches OmniRoute: connections are picked up per-request).
+    pub fn reload_accounts(&self) {
+        let mut config = RouterConfig::from_env();
+        if let Some(db) = &self.db {
+            if let Err(e) = config.load_from_db(db) {
+                tracing::warn!("reload accounts failed: {}", e);
+            }
+            config = config.with_db_persistence(db.clone());
+        }
+        if let Ok(mut combo) = self.combo.try_write() {
+            *combo = ComboEngine::new(RoutingEngine::new(config));
+        }
+    }
+
     pub fn with_router(mut self, config: RouterConfig) -> Self {
-        self.combo = ComboEngine::new(RoutingEngine::new(config));
+        self.combo = std::sync::Arc::new(tokio::sync::RwLock::new(ComboEngine::new(
+            RoutingEngine::new(config),
+        )));
         self
     }
 
@@ -85,14 +105,15 @@ async fn handle_health(State(state): State<AppState>) -> Json<serde_json::Value>
 /// Chat completion handler — routes via combo engine with fallback.
 /// Honors `stream: true` by returning an SSE response.
 async fn handle_chat(
-    State(mut state): State<AppState>,
+    State(state): State<AppState>,
     Json(req): Json<ChatRequest>,
 ) -> Result<axum::response::Response, (StatusCode, Json<serde_json::Value>)> {
-    if req.is_streaming() {
+    if req.stream.unwrap_or(false) {
         return handle_chat_stream(state, req).await;
     }
 
-    match state.combo.execute(&req).await {
+    let mut combo = state.combo.write().await;
+    match combo.execute(&req).await {
         Ok(result) => {
             let mut resp = crate::sanitize::sanitize_response(result.response);
             resp.model = result.used_model;
@@ -104,10 +125,11 @@ async fn handle_chat(
 
 /// SSE streaming chat handler
 async fn handle_chat_stream(
-    mut state: AppState,
+    state: AppState,
     req: ChatRequest,
 ) -> Result<axum::response::Response, (StatusCode, Json<serde_json::Value>)> {
-    let attempt = match state.combo.execute_stream(&req).await {
+    let mut combo = state.combo.write().await;
+    let attempt = match combo.execute_stream(&req).await {
         Ok(a) => a,
         Err(e) => return Err(combo_error_response(e)),
     };

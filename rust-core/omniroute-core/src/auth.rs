@@ -64,7 +64,13 @@ pub fn bearer_token(headers: &axum::http::HeaderMap) -> Option<String> {
 }
 
 /// Auth middleware: requires a valid gateway API key on protected routes.
+/// `/admin/*` is excluded — it has its own stricter auth.
 pub async fn auth_middleware(request: Request, next: Next) -> Result<Response, StatusCode> {
+    // Admin routes are protected by admin auth (separate key)
+    if request.uri().path().starts_with("/admin") {
+        return Ok(next.run(request).await);
+    }
+
     let keys = request
         .extensions()
         .get::<GatewayKeys>()
