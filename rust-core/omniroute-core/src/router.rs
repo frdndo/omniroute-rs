@@ -15,9 +15,43 @@ pub struct RouteTarget {
 pub struct RouterConfig {
     pub api_keys: HashMap<String, String>,
     pub accounts: AccountManager,
+    /// Optional upstream base URL overrides (tests, self-hosted mirrors)
+    pub base_urls: HashMap<String, String>,
 }
 
 impl RouterConfig {
+    /// Build a RouterConfig from environment:
+    ///   OMNIROUTE_PROVIDER_KEYS="openai=sk-1;claude=sk-2"  (multi keys: openai=sk-1,sk-2)
+    ///   OMNIROUTE_BASE_URL_<PROVIDER>=<url>
+    pub fn from_env() -> Self {
+        let mut cfg = RouterConfig::default();
+        if let Ok(keys_str) = std::env::var("OMNIROUTE_PROVIDER_KEYS") {
+            for part in keys_str.split(';') {
+                let part = part.trim();
+                if part.is_empty() {
+                    continue;
+                }
+                if let Some((provider, keys)) = part.split_once('=') {
+                    let provider = provider.trim();
+                    let key_list: Vec<String> = keys
+                        .split(',')
+                        .map(|k| k.trim().to_string())
+                        .filter(|k| !k.is_empty())
+                        .collect();
+                    if key_list.len() > 1 {
+                        cfg = cfg.with_pool(provider, key_list);
+                    } else if let Some(k) = key_list.first() {
+                        cfg = cfg.with_key(provider, k);
+                    }
+                }
+            }
+        }
+        for (provider, url) in crate::config::base_urls_from_env() {
+            cfg = cfg.with_base_url(&provider, &url);
+        }
+        cfg
+    }
+
     /// Register a single API key for a provider (shorthand).
     pub fn with_key(mut self, provider: &str, key: &str) -> Self {
         self.api_keys.insert(provider.to_string(), key.to_string());
@@ -32,6 +66,12 @@ impl RouterConfig {
             keys.first().cloned().unwrap_or_default(),
         );
         self.accounts.add_pool(provider, keys);
+        self
+    }
+
+    /// Override the upstream base URL for a provider.
+    pub fn with_base_url(mut self, provider: &str, url: &str) -> Self {
+        self.base_urls.insert(provider.to_string(), url.to_string());
         self
     }
 }
@@ -104,7 +144,11 @@ impl RoutingEngine {
             return Err(ExecutorError::AuthFailed(0));
         }
 
-        let executor = ProviderExecutor::from_provider_id(provider_id, &account_key)?;
+        let executor = ProviderExecutor::from_provider_id_with_base(
+            provider_id,
+            &account_key,
+            self.config.base_urls.get(provider_id).map(|s| s.as_str()),
+        )?;
         Ok(RouteTarget {
             provider_id: provider_id.to_string(),
             account_key,

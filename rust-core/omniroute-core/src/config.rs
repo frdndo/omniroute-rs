@@ -56,6 +56,23 @@ pub fn allowed_hosts_from_env() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Upstream base URL overrides from `OMNIROUTE_BASE_URL_<PROVIDER>`
+/// (e.g. OMNIROUTE_BASE_URL_OPENAI=http://127.0.0.1:9099).
+/// Used for tests and self-hosted mirrors.
+pub fn base_urls_from_env() -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    let prefix = "OMNIROUTE_BASE_URL_";
+    for (k, v) in std::env::vars() {
+        if let Some(rest) = k.strip_prefix(prefix) {
+            let provider = rest.to_lowercase();
+            if !v.trim().is_empty() {
+                map.insert(provider, v.trim().to_string());
+            }
+        }
+    }
+    map
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

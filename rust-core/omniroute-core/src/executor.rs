@@ -129,30 +129,29 @@ impl ProviderExecutor {
     }
 
     /// Convenience: factory that picks the right executor for a provider id.
-    pub fn from_provider_id(provider_id: &str, api_key: &str) -> Result<Self, ExecutorError> {
-        match provider_id {
-            "openai" => Ok(Self::new(
-                ApiFormat::OpenAi,
-                "https://api.openai.com/v1",
-                api_key,
-            )),
-            "deepseek" => Ok(Self::new(
-                ApiFormat::OpenAi,
-                "https://api.deepseek.com/v1",
-                api_key,
-            )),
-            "claude" => Ok(Self::new(
-                ApiFormat::Claude,
-                "https://api.anthropic.com/v1",
-                api_key,
-            )),
-            "gemini" => Ok(Self::new(
+    /// `base_override` (optional) replaces the default upstream URL —
+    /// used for tests and self-hosted mirrors.
+    pub fn from_provider_id_with_base(
+        provider_id: &str,
+        api_key: &str,
+        base_override: Option<&str>,
+    ) -> Result<Self, ExecutorError> {
+        let (format, base) = match provider_id {
+            "openai" => (ApiFormat::OpenAi, "https://api.openai.com/v1"),
+            "deepseek" => (ApiFormat::OpenAi, "https://api.deepseek.com/v1"),
+            "claude" => (ApiFormat::Claude, "https://api.anthropic.com/v1"),
+            "gemini" => (
                 ApiFormat::Gemini,
                 "https://generativelanguage.googleapis.com/v1beta",
-                api_key,
-            )),
-            other => Err(ExecutorError::UnsupportedProvider(other.to_string())),
-        }
+            ),
+            other => return Err(ExecutorError::UnsupportedProvider(other.to_string())),
+        };
+        Ok(Self::new(format, base_override.unwrap_or(base), api_key))
+    }
+
+    /// Convenience: factory that picks the right executor for a provider id.
+    pub fn from_provider_id(provider_id: &str, api_key: &str) -> Result<Self, ExecutorError> {
+        Self::from_provider_id_with_base(provider_id, api_key, None)
     }
 }
 

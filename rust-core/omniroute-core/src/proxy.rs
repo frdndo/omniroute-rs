@@ -213,6 +213,7 @@ pub fn build_router(state: AppState) -> Router {
 /// Start the proxy server on the given port
 pub async fn start_server(port: u16, version: &str) {
     let state = AppState::new(version)
+        .with_router(RouterConfig::from_env())
         .with_gateway_keys(crate::config::gateway_keys_from_env())
         .with_allowed_hosts(crate::config::allowed_hosts_from_env());
     let app = with_rate_limit(build_router(state));
