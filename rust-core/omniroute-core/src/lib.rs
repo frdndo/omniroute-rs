@@ -1,5 +1,6 @@
 pub mod chat;
 pub mod config;
+pub mod executor;
 pub mod proxy;
 pub mod ratelimit;
 pub mod sse;

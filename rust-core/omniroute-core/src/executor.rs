@@ -1,0 +1,338 @@
+pub mod request_builder;
+pub mod response_parser;
+
+use crate::chat::{ChatRequest, ChatResponse};
+use reqwest::StatusCode;
+use std::time::Duration;
+use thiserror::Error;
+
+/// Errors that can occur while executing a request against a provider
+#[derive(Debug, Error)]
+pub enum ExecutorError {
+    #[error("rate limited by upstream (HTTP {0})")]
+    RateLimited(u16),
+    #[error("authentication failed (HTTP {0})")]
+    AuthFailed(u16),
+    #[error("upstream error (HTTP {0}): {1}")]
+    Upstream(u16, String),
+    #[error("network error: {0}")]
+    Network(String),
+    #[error("timeout after {0}s")]
+    Timeout(u64),
+    #[error("invalid response: {0}")]
+    InvalidResponse(String),
+    #[error("unsupported provider: {0}")]
+    UnsupportedProvider(String),
+}
+
+/// Which upstream API format a provider speaks
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApiFormat {
+    /// OpenAI-compatible chat completions (OpenAI, DeepSeek, Groq, ...)
+    OpenAi,
+    /// Anthropic Messages API
+    Claude,
+    /// Google Gemini generateContent
+    Gemini,
+}
+
+/// HTTP executor that talks to a real provider upstream
+#[derive(Debug)]
+pub struct ProviderExecutor {
+    client: reqwest::Client,
+    api_format: ApiFormat,
+    base_url: String,
+    api_key: String,
+    timeout_secs: u64,
+}
+
+impl ProviderExecutor {
+    pub fn new(api_format: ApiFormat, base_url: &str, api_key: &str) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(120))
+            .user_agent("omniroute-rs/0.1.0")
+            .build()
+            .expect("failed to build HTTP client");
+        Self {
+            client,
+            api_format,
+            base_url: base_url.trim_end_matches('/').to_string(),
+            api_key: api_key.to_string(),
+            timeout_secs: 120,
+        }
+    }
+
+    pub fn with_timeout(mut self, secs: u64) -> Self {
+        self.timeout_secs = secs;
+        self
+    }
+
+    /// Execute a chat completion request against the configured provider.
+    ///
+    /// The request is translated to the provider's native wire format, sent
+    /// upstream, and the response is normalized back to the OpenAI-compatible
+    /// `ChatResponse` shape.
+    pub async fn execute_chat(&self, req: &ChatRequest) -> Result<ChatResponse, ExecutorError> {
+        let url = match self.api_format {
+            ApiFormat::OpenAi => format!("{}/chat/completions", self.base_url),
+            ApiFormat::Claude => format!("{}/messages", self.base_url),
+            ApiFormat::Gemini => format!("{}/models/{}:generateContent", self.base_url, req.model),
+        };
+
+        let body = request_builder::build_upstream_request(self.api_format, req)?;
+        let mut builder = self.client.post(&url).json(&body);
+
+        match self.api_format {
+            ApiFormat::OpenAi => {
+                builder = builder.bearer_auth(&self.api_key);
+            }
+            ApiFormat::Claude => {
+                builder = builder
+                    .header("x-api-key", &self.api_key)
+                    .header("anthropic-version", "2023-06-01");
+            }
+            ApiFormat::Gemini => {
+                builder = builder.query(&[("key", &self.api_key)]);
+            }
+        }
+
+        let resp = builder
+            .send()
+            .await
+            .map_err(|e| ExecutorError::Network(e.to_string()))?;
+
+        let status = resp.status();
+        let body_bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| ExecutorError::Network(e.to_string()))?;
+
+        match status {
+            StatusCode::OK => {
+                response_parser::parse_upstream_response(self.api_format, &req.model, &body_bytes)
+            }
+            StatusCode::TOO_MANY_REQUESTS => Err(ExecutorError::RateLimited(status.as_u16())),
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+                Err(ExecutorError::AuthFailed(status.as_u16()))
+            }
+            _ => Err(ExecutorError::Upstream(
+                status.as_u16(),
+                String::from_utf8_lossy(&body_bytes).into_owned(),
+            )),
+        }
+    }
+
+    /// Convenience: factory that picks the right executor for a provider id.
+    pub fn from_provider_id(provider_id: &str, api_key: &str) -> Result<Self, ExecutorError> {
+        match provider_id {
+            "openai" => Ok(Self::new(
+                ApiFormat::OpenAi,
+                "https://api.openai.com/v1",
+                api_key,
+            )),
+            "deepseek" => Ok(Self::new(
+                ApiFormat::OpenAi,
+                "https://api.deepseek.com/v1",
+                api_key,
+            )),
+            "claude" => Ok(Self::new(
+                ApiFormat::Claude,
+                "https://api.anthropic.com/v1",
+                api_key,
+            )),
+            "gemini" => Ok(Self::new(
+                ApiFormat::Gemini,
+                "https://generativelanguage.googleapis.com/v1beta",
+                api_key,
+            )),
+            other => Err(ExecutorError::UnsupportedProvider(other.to_string())),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chat::Message;
+    use axum::{Json, Router, extract::State, http::StatusCode as AxumStatus, routing::post};
+    use serde_json::Value;
+    use std::sync::Arc;
+    use tokio::net::TcpListener;
+
+    // ── Mock upstream server ──
+
+    #[derive(Clone)]
+    struct MockState {
+        api_format: ApiFormat,
+    }
+
+    async fn mock_handler(
+        State(state): State<Arc<MockState>>,
+        Json(body): Json<Value>,
+    ) -> (AxumStatus, Json<Value>) {
+        match state.api_format {
+            ApiFormat::OpenAi => (
+                AxumStatus::OK,
+                Json(serde_json::json!({
+                    "id": "chatcmpl-mock",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": body["model"],
+                    "choices": [{
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "Mock OpenAI reply"},
+                        "finish_reason": "stop"
+                    }],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+                })),
+            ),
+            ApiFormat::Claude => (
+                AxumStatus::OK,
+                Json(serde_json::json!({
+                    "id": "msg_01mock",
+                    "type": "message",
+                    "role": "assistant",
+                    "model": body["model"],
+                    "content": [{"type": "text", "text": "Mock Claude reply"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1}
+                })),
+            ),
+            ApiFormat::Gemini => (
+                AxumStatus::OK,
+                Json(serde_json::json!({
+                    "candidates": [{
+                        "content": {
+                            "parts": [{"text": "Mock Gemini reply"}],
+                            "role": "model"
+                        },
+                        "finishReason": "STOP"
+                    }],
+                    "usageMetadata": {
+                        "promptTokenCount": 1,
+                        "candidatesTokenCount": 1,
+                        "totalTokenCount": 2
+                    }
+                })),
+            ),
+        }
+    }
+
+    async fn spawn_mock(format: ApiFormat) -> (String, tokio::task::JoinHandle<()>) {
+        let state = Arc::new(MockState { api_format: format });
+        let app = Router::new()
+            .route("/v1/chat/completions", post(mock_handler))
+            .route("/v1/messages", post(mock_handler))
+            .route("/v1beta/models/{*rest}", post(mock_handler))
+            .with_state(state);
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        // Executor appends the resource path to base_url; give it the
+        // matching API prefix so the mock routes line up.
+        let base = match format {
+            ApiFormat::OpenAi | ApiFormat::Claude => format!("http://{}/v1", addr),
+            ApiFormat::Gemini => format!("http://{}/v1beta", addr),
+        };
+        (base, server)
+    }
+
+    fn sample_request(model: &str) -> ChatRequest {
+        ChatRequest {
+            model: model.to_string(),
+            messages: vec![Message {
+                role: "user".into(),
+                content: Some(crate::chat::Content::Text("Hello".into())),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            stream: Some(false),
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            extra: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_openai_executor() {
+        let (base, server) = spawn_mock(ApiFormat::OpenAi).await;
+        let executor = ProviderExecutor::new(ApiFormat::OpenAi, &base, "test-key");
+        let resp = executor
+            .execute_chat(&sample_request("gpt-4o"))
+            .await
+            .unwrap();
+        assert_eq!(resp.model, "gpt-4o");
+        assert_eq!(
+            resp.choices[0]
+                .message
+                .content
+                .as_ref()
+                .unwrap()
+                .to_string(),
+            "Mock OpenAI reply"
+        );
+        assert_eq!(resp.usage.as_ref().unwrap().total_tokens, 2);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn test_claude_executor() {
+        let (base, server) = spawn_mock(ApiFormat::Claude).await;
+        let executor = ProviderExecutor::new(ApiFormat::Claude, &base, "test-key");
+        let resp = executor
+            .execute_chat(&sample_request("claude-sonnet-4-20250514"))
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.choices[0]
+                .message
+                .content
+                .as_ref()
+                .unwrap()
+                .to_string(),
+            "Mock Claude reply"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn test_gemini_executor() {
+        let (base, server) = spawn_mock(ApiFormat::Gemini).await;
+        let executor = ProviderExecutor::new(ApiFormat::Gemini, &base, "test-key");
+        let resp = executor
+            .execute_chat(&sample_request("gemini-2.5-flash"))
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.choices[0]
+                .message
+                .content
+                .as_ref()
+                .unwrap()
+                .to_string(),
+            "Mock Gemini reply"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn test_unsupported_provider() {
+        let err = ProviderExecutor::from_provider_id("nonexistent", "key").unwrap_err();
+        assert!(matches!(err, ExecutorError::UnsupportedProvider(_)));
+    }
+
+    #[tokio::test]
+    async fn test_factory_creates_executor() {
+        let exec = ProviderExecutor::from_provider_id("openai", "key").unwrap();
+        assert_eq!(exec.api_format, ApiFormat::OpenAi);
+        assert_eq!(exec.base_url, "https://api.openai.com/v1");
+    }
+}
