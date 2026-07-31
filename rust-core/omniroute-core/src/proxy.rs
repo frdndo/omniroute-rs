@@ -1,14 +1,16 @@
 use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
 use tower_http::cors::CorsLayer;
 
-use crate::chat::{ChatRequest, ChatResponse, Usage};
+use crate::chat::{ChatRequest, ChatResponse};
 use crate::ratelimit::with_rate_limit;
+use crate::router::{RouterConfig, RoutingEngine};
 
 /// Shared application state
 #[derive(Clone)]
 pub struct AppState {
     pub started_at: chrono::DateTime<chrono::Utc>,
     pub version: String,
+    pub router: RoutingEngine,
 }
 
 impl AppState {
@@ -16,7 +18,13 @@ impl AppState {
         Self {
             started_at: chrono::Utc::now(),
             version: version.to_string(),
+            router: RoutingEngine::new(RouterConfig::default()),
         }
+    }
+
+    pub fn with_router(mut self, config: RouterConfig) -> Self {
+        self.router = RoutingEngine::new(config);
+        self
     }
 }
 
@@ -30,34 +38,44 @@ async fn handle_health(State(state): State<AppState>) -> Json<serde_json::Value>
     }))
 }
 
-/// Chat completion handler (non-streaming mock)
+/// Chat completion handler — routes to the right provider via the routing engine
 async fn handle_chat(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Json(req): Json<ChatRequest>,
-) -> Result<Json<ChatResponse>, StatusCode> {
-    let model = req.model.clone();
-    let user_msg = req
-        .messages
-        .iter()
-        .find(|m| m.role == "user")
-        .and_then(|m| m.content.as_ref())
-        .map(|c| match c {
-            crate::chat::Content::Text(t) => t.clone(),
-            crate::chat::Content::Parts(_) => "...".into(),
-        })
-        .unwrap_or_default();
+) -> Result<Json<ChatResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let route = state.router.route(&req.model).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": {
+                    "message": e.to_string(),
+                    "type": "invalid_request_error",
+                }
+            })),
+        )
+    })?;
 
-    let response = ChatResponse::new(
-        &model,
-        &format!("Echo: {}", user_msg),
-        Some(Usage {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            total_tokens: 0,
-        }),
-    );
-
-    Ok(Json(response))
+    match route.executor.execute_chat(&req).await {
+        Ok(resp) => Ok(Json(resp)),
+        Err(e) => {
+            let status = match &e {
+                crate::executor::ExecutorError::RateLimited(_) => StatusCode::TOO_MANY_REQUESTS,
+                crate::executor::ExecutorError::AuthFailed(_) => StatusCode::UNAUTHORIZED,
+                crate::executor::ExecutorError::Timeout(_) => StatusCode::GATEWAY_TIMEOUT,
+                _ => StatusCode::BAD_GATEWAY,
+            };
+            Err((
+                status,
+                Json(serde_json::json!({
+                    "error": {
+                        "message": e.to_string(),
+                        "type": "upstream_error",
+                        "provider": route.provider_id,
+                    }
+                })),
+            ))
+        }
+    }
 }
 
 /// List available models
@@ -158,7 +176,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_chat_endpoint() {
+    async fn test_chat_endpoint_unknown_model() {
+        let state = AppState::new("test");
+        let app = build_router(state);
+
+        let req_body = serde_json::json!({
+            "model": "unknown-model-xyz",
+            "messages": [{"role": "user", "content": "Hello!"}]
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/chat/completions")
+                    .method(Method::POST)
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&req_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body = axum::body::to_bytes(response.into_body(), 65536)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"]["type"], "invalid_request_error");
+    }
+
+    #[tokio::test]
+    async fn test_chat_endpoint_missing_api_key() {
+        // Default state has no API keys configured
         let state = AppState::new("test");
         let app = build_router(state);
 
@@ -178,18 +227,14 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        // Missing API key surfaces as a route error (400) until auth
+        // hardening (Blok D) separates config errors from bad requests.
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
         let body = axum::body::to_bytes(response.into_body(), 65536)
             .await
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["object"], "chat.completion");
-        assert!(
-            json["choices"][0]["message"]["content"]
-                .as_str()
-                .unwrap()
-                .contains("Hello")
-        );
+        assert_eq!(json["error"]["type"], "invalid_request_error");
     }
 }

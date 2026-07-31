@@ -67,6 +67,11 @@ impl ProviderExecutor {
         self
     }
 
+    /// Which upstream API format this executor speaks
+    pub fn api_format(&self) -> ApiFormat {
+        self.api_format
+    }
+
     /// Execute a chat completion request against the configured provider.
     ///
     /// The request is translated to the provider's native wire format, sent
