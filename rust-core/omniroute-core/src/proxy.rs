@@ -2,6 +2,7 @@ use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
 use tower_http::cors::CorsLayer;
 
 use crate::chat::{ChatRequest, ChatResponse};
+use crate::combo::ComboEngine;
 use crate::ratelimit::with_rate_limit;
 use crate::router::{RouterConfig, RoutingEngine};
 
@@ -10,7 +11,7 @@ use crate::router::{RouterConfig, RoutingEngine};
 pub struct AppState {
     pub started_at: chrono::DateTime<chrono::Utc>,
     pub version: String,
-    pub router: RoutingEngine,
+    pub combo: ComboEngine,
 }
 
 impl AppState {
@@ -18,12 +19,12 @@ impl AppState {
         Self {
             started_at: chrono::Utc::now(),
             version: version.to_string(),
-            router: RoutingEngine::new(RouterConfig::default()),
+            combo: ComboEngine::new(RoutingEngine::new(RouterConfig::default())),
         }
     }
 
     pub fn with_router(mut self, config: RouterConfig) -> Self {
-        self.router = RoutingEngine::new(config);
+        self.combo = ComboEngine::new(RoutingEngine::new(config));
         self
     }
 }
@@ -38,39 +39,33 @@ async fn handle_health(State(state): State<AppState>) -> Json<serde_json::Value>
     }))
 }
 
-/// Chat completion handler — routes to the right provider via the routing engine
+/// Chat completion handler — routes via combo engine with fallback
 async fn handle_chat(
     State(state): State<AppState>,
     Json(req): Json<ChatRequest>,
 ) -> Result<Json<ChatResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let route = state.router.route(&req.model).map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": {
-                    "message": e.to_string(),
-                    "type": "invalid_request_error",
-                }
-            })),
-        )
-    })?;
-
-    match route.executor.execute_chat(&req).await {
-        Ok(resp) => Ok(Json(resp)),
+    match state.combo.execute(&req).await {
+        Ok(result) => {
+            let mut resp = result.response;
+            resp.model = result.used_model;
+            Ok(Json(resp))
+        }
         Err(e) => {
-            let status = match &e {
-                crate::executor::ExecutorError::RateLimited(_) => StatusCode::TOO_MANY_REQUESTS,
-                crate::executor::ExecutorError::AuthFailed(_) => StatusCode::UNAUTHORIZED,
-                crate::executor::ExecutorError::Timeout(_) => StatusCode::GATEWAY_TIMEOUT,
-                _ => StatusCode::BAD_GATEWAY,
-            };
+            let status = StatusCode::BAD_GATEWAY;
+            let last = e.attempts.last();
+            let provider = last.and_then(|a| a.provider.clone()).unwrap_or_default();
             Err((
                 status,
                 Json(serde_json::json!({
                     "error": {
                         "message": e.to_string(),
                         "type": "upstream_error",
-                        "provider": route.provider_id,
+                        "provider": provider,
+                        "attempts": e.attempts.iter().map(|a| serde_json::json!({
+                            "model": a.model,
+                            "provider": a.provider,
+                            "error": a.error,
+                        })).collect::<Vec<_>>(),
                     }
                 })),
             ))
@@ -196,13 +191,14 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
 
         let body = axum::body::to_bytes(response.into_body(), 65536)
             .await
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["error"]["type"], "invalid_request_error");
+        assert_eq!(json["error"]["type"], "upstream_error");
+        assert!(!json["error"]["attempts"].as_array().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -227,14 +223,13 @@ mod tests {
             )
             .await
             .unwrap();
-        // Missing API key surfaces as a route error (400) until auth
-        // hardening (Blok D) separates config errors from bad requests.
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        // Missing API key surfaces as upstream error (502) with attempts detail
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
 
         let body = axum::body::to_bytes(response.into_body(), 65536)
             .await
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["error"]["type"], "invalid_request_error");
+        assert_eq!(json["error"]["type"], "upstream_error");
     }
 }
