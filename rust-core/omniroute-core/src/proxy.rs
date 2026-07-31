@@ -199,7 +199,7 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
 
-        let body = axum::body::to_bytes(response.into_body(), 65536)
+        let body = axum::body::to_bytes(response.into_body(), 4 * 1024 * 1024)
             .await
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -230,7 +230,7 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
 
-        let body = axum::body::to_bytes(response.into_body(), 65536)
+        let body = axum::body::to_bytes(response.into_body(), 4 * 1024 * 1024)
             .await
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -263,7 +263,7 @@ mod tests {
         // Missing API key surfaces as upstream error (502) with attempts detail
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
 
-        let body = axum::body::to_bytes(response.into_body(), 65536)
+        let body = axum::body::to_bytes(response.into_body(), 4 * 1024 * 1024)
             .await
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();

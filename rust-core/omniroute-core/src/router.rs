@@ -50,26 +50,9 @@ impl RoutingEngine {
 
     /// Resolve the provider id that owns a model.
     pub fn resolve_provider(&self, model: &str) -> Result<&'static str, ExecutorError> {
-        // 1. Exact model match in registry
-        for (provider_id, provider) in omniroute_providers::REGISTRY.iter() {
-            if provider.models.iter().any(|m| m.id == model) {
-                return Ok(provider_id.as_str());
-            }
-        }
-
-        // 2. Prefix match
+        // 1. Known prefixes — deterministic, resolves ambiguity when many
+        //    providers carry the same model (e.g. gpt-4o appears in 8+)
         let lower = model.to_lowercase();
-        for (provider_id, provider) in omniroute_providers::REGISTRY.iter() {
-            if provider
-                .models
-                .iter()
-                .any(|m| lower.starts_with(&m.id.to_lowercase()))
-            {
-                return Ok(provider_id.as_str());
-            }
-        }
-
-        // 3. Known prefixes
         let known: &[(&str, &str)] = &[
             ("gpt-", "openai"),
             ("o1-", "openai"),
@@ -83,6 +66,11 @@ impl RoutingEngine {
             if lower.starts_with(prefix) {
                 return Ok(provider);
             }
+        }
+
+        // 2. Registry match (exact, then prefix) for everything else
+        if let Some(pid) = omniroute_providers::resolve_provider_for_model(model) {
+            return Ok(pid);
         }
 
         Err(ExecutorError::UnsupportedProvider(format!(
