@@ -15,7 +15,7 @@ pub struct AppState {
     pub started_at: chrono::DateTime<chrono::Utc>,
     pub version: String,
     pub combo: std::sync::Arc<tokio::sync::RwLock<ComboEngine>>,
-    pub gateway_keys: GatewayKeys,
+    pub gateway_keys: std::sync::Arc<std::sync::RwLock<GatewayKeys>>,
     pub allowed_hosts: AllowedHosts,
     pub admin_keys: crate::admin::AdminKeys,
     pub db_path: String,
@@ -30,7 +30,7 @@ impl AppState {
             combo: std::sync::Arc::new(tokio::sync::RwLock::new(ComboEngine::new(
                 RoutingEngine::new(RouterConfig::default()),
             ))),
-            gateway_keys: GatewayKeys::default(),
+            gateway_keys: std::sync::Arc::new(std::sync::RwLock::new(GatewayKeys::default())),
             allowed_hosts: AllowedHosts::default(),
             admin_keys: crate::admin::AdminKeys::default(),
             db_path: "./data/omniroute.db".to_string(),
@@ -50,8 +50,16 @@ impl AppState {
             config = config.with_db_persistence(db.clone());
         }
         if let Ok(mut combo) = self.combo.try_write() {
-            *combo = ComboEngine::new(RoutingEngine::new(config));
+            let mut new_combo = ComboEngine::new(RoutingEngine::new(config));
+            #[allow(clippy::collapsible_if)]
+            if let Some(db) = &self.db {
+                if let Err(e) = new_combo.load_combos_from_db(db) {
+                    tracing::warn!("reload combos failed: {}", e);
+                }
+            }
+            *combo = new_combo;
         }
+        self.reload_gateway_keys();
     }
 
     pub fn with_router(mut self, config: RouterConfig) -> Self {
@@ -62,8 +70,19 @@ impl AppState {
     }
 
     pub fn with_gateway_keys(mut self, keys: Vec<String>) -> Self {
-        self.gateway_keys = GatewayKeys::new(keys);
+        self.gateway_keys = std::sync::Arc::new(std::sync::RwLock::new(GatewayKeys::new(keys)));
         self
+    }
+
+    /// Rebuild gateway keys from env + DB (apiKeys table). Hot-swappable.
+    fn reload_gateway_keys(&self) {
+        let keys = match &self.db {
+            Some(db) => GatewayKeys::from_db(db),
+            None => GatewayKeys::new(crate::config::gateway_keys_from_env()),
+        };
+        if let Ok(mut g) = self.gateway_keys.write() {
+            *g = keys;
+        }
     }
 
     pub fn with_allowed_hosts(mut self, hosts: Vec<String>) -> Self {
@@ -323,6 +342,8 @@ pub async fn start_server(port: u16, version: &str) {
         .with_admin_keys(crate::admin::AdminKeys::from_env())
         .with_db_path(&db_path)
         .with_db(db);
+    // Full reload: accounts (DB) + combos (DB) + env config
+    state.reload_accounts();
     let app = with_rate_limit(build_router(state));
 
     let addr = format!("0.0.0.0:{}", port);

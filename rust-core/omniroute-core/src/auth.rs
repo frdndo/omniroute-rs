@@ -22,6 +22,23 @@ impl GatewayKeys {
         self
     }
 
+    /// Load active API keys from SQLite (apiKeys table) — DB is the
+    /// primary source, env keys fill gaps (matches OmniRoute flow).
+    pub fn from_db(db: &omniroute_db::Database) -> Self {
+        let mut keys = crate::config::gateway_keys_from_env();
+        #[allow(clippy::collapsible_if)]
+        if let Ok(conn) = db.conn.lock() {
+            if let Ok(items) = omniroute_db::repos::api_key_repo::get_all(&conn) {
+                for k in items {
+                    if k.is_active && !keys.contains(&k.key) {
+                        keys.push(k.key);
+                    }
+                }
+            }
+        }
+        Self { keys }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.keys.is_empty()
     }
@@ -31,6 +48,10 @@ impl GatewayKeys {
             Some(t) => self.keys.iter().any(|k| k == t),
             None => false,
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.keys.len()
     }
 }
 
@@ -65,6 +86,7 @@ pub fn bearer_token(headers: &axum::http::HeaderMap) -> Option<String> {
 
 /// Auth middleware: requires a valid gateway API key on protected routes.
 /// `/admin/*` is excluded — it has its own stricter auth.
+/// Reads keys from an Arc<RwLock<GatewayKeys>> so admin changes apply live.
 pub async fn auth_middleware(request: Request, next: Next) -> Result<Response, StatusCode> {
     // Admin routes are protected by admin auth (separate key)
     if request.uri().path().starts_with("/admin") {
@@ -73,9 +95,13 @@ pub async fn auth_middleware(request: Request, next: Next) -> Result<Response, S
 
     let keys = request
         .extensions()
-        .get::<GatewayKeys>()
+        .get::<std::sync::Arc<std::sync::RwLock<GatewayKeys>>>()
         .cloned()
         .unwrap_or_default();
+    let keys = match keys.read() {
+        Ok(g) => g.clone(),
+        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+    };
 
     // If no keys configured, auth is disabled (dev mode)
     if keys.is_empty() {
@@ -122,7 +148,11 @@ pub async fn host_guard_middleware(request: Request, next: Next) -> Result<Respo
 /// Apply host guard + auth to a router.
 /// Extension layers go OUTSIDE the middleware so they're set before
 /// the middleware inspects the request.
-pub fn harden_router(router: Router, keys: GatewayKeys, hosts: AllowedHosts) -> Router {
+pub fn harden_router(
+    router: Router,
+    keys: std::sync::Arc<std::sync::RwLock<GatewayKeys>>,
+    hosts: AllowedHosts,
+) -> Router {
     router
         .layer(middleware::from_fn(host_guard_middleware))
         .layer(middleware::from_fn(auth_middleware))

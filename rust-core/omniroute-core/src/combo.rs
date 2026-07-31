@@ -117,6 +117,28 @@ impl ComboEngine {
         self
     }
 
+    /// Load combos from SQLite (combos table) — name → ordered model chain.
+    pub fn load_combos_from_db(&mut self, db: &omniroute_db::Database) -> Result<(), String> {
+        let combos = {
+            let conn = db.conn.lock().map_err(|e| e.to_string())?;
+            omniroute_db::repos::combo_repo::get_all(&conn).map_err(|e| e.to_string())?
+        };
+        for c in combos {
+            if c.models.is_empty() {
+                continue;
+            }
+            tracing::info!(
+                "loaded combo '{}' ({} models): {:?}",
+                c.name,
+                c.models.len(),
+                c.models
+            );
+            self.combos
+                .insert(c.name.clone(), Combo::new(&c.id, &c.name, c.models));
+        }
+        Ok(())
+    }
+
     /// Execute a request with fallback.
     ///
     /// Resolution order for the candidate list:

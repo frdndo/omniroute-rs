@@ -28,3 +28,37 @@ pub fn insert(conn: &Connection, c: &Combo) -> Result<()> {
     )?;
     Ok(())
 }
+
+pub fn delete(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute("DELETE FROM combos WHERE id=?1", params![id])?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::migrations;
+
+    #[test]
+    fn test_combo_crud() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrations::run_migrations(&conn).unwrap();
+        insert(
+            &conn,
+            &Combo {
+                id: "c1".into(),
+                name: "smart".into(),
+                kind: "model".into(),
+                models: vec!["gpt-4o".into(), "claude-sonnet-4".into()],
+                created_at: "2026-01-01".into(),
+                updated_at: "2026-01-01".into(),
+            },
+        )
+        .unwrap();
+        let all = get_all(&conn).unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].models, vec!["gpt-4o", "claude-sonnet-4"]);
+        delete(&conn, "c1").unwrap();
+        assert!(get_all(&conn).unwrap().is_empty());
+    }
+}

@@ -250,6 +250,9 @@ pub async fn create_api_key(
     })
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
+    // New gateway key applies immediately
+    state.reload_accounts();
+
     Ok((
         StatusCode::CREATED,
         Json(json!({ "id": item.id, "key": key })),
@@ -268,6 +271,72 @@ pub async fn delete_api_key(
     Ok(Json(json!({ "ok": true, "id": id })))
 }
 
+// ── Combo management (fallback chains) ───────────────────────────────
+
+pub async fn list_combos(
+    State(state): State<crate::proxy::AppState>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let items = with_db(&state, |c| {
+        omniroute_db::repos::combo_repo::get_all(c).map_err(|e| e.to_string())
+    })
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(json!({ "object": "list", "data": items })))
+}
+
+pub async fn create_combo(
+    State(state): State<crate::proxy::AppState>,
+    Json(body): Json<Value>,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, String)> {
+    let name = body["name"].as_str().unwrap_or("").to_string();
+    if name.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "name is required".into()));
+    }
+    let models: Vec<String> = body["models"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|m| m.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    if models.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "models[] must not be empty".into()));
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let combo = omniroute_db::models::Combo {
+        id: uuid::Uuid::new_v4().to_string(),
+        name,
+        kind: body["kind"].as_str().unwrap_or("model").to_string(),
+        models,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+
+    with_db(&state, |c| {
+        omniroute_db::repos::combo_repo::insert(c, &combo).map_err(|e| e.to_string())
+    })
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    state.reload_accounts();
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({ "id": combo.id, "name": combo.name })),
+    ))
+}
+
+pub async fn delete_combo(
+    State(state): State<crate::proxy::AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    with_db(&state, |c| {
+        omniroute_db::repos::combo_repo::delete(c, &id).map_err(|e| e.to_string())
+    })
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    state.reload_accounts();
+    Ok(Json(json!({ "ok": true, "id": id })))
+}
+
 /// Build the admin sub-router.
 pub fn admin_router(state: crate::proxy::AppState) -> Router {
     Router::new()
@@ -278,6 +347,9 @@ pub fn admin_router(state: crate::proxy::AppState) -> Router {
         .route("/api-keys", get(list_api_keys))
         .route("/api-keys", post(create_api_key))
         .route("/api-keys/{id}", delete(delete_api_key))
+        .route("/combos", get(list_combos))
+        .route("/combos", post(create_combo))
+        .route("/combos/{id}", delete(delete_combo))
         .with_state(state)
 }
 
