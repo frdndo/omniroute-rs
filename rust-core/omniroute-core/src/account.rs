@@ -110,6 +110,36 @@ impl AccountPool {
         None
     }
 
+    /// Prefer a specific account key (session affinity) if it is available.
+    /// Returns Some(key) if usable, None to fall back to round-robin.
+    pub fn prefer_key(&mut self, key: &str) -> Option<&Account> {
+        let now = Instant::now();
+        let n = self.accounts.len();
+        for i in 0..n {
+            if self.accounts[i].key == key && self.accounts[i].available(now) {
+                // Advance rotation past it so the next call doesn't repeat it
+                self.next_idx = (i + 1) % n;
+                return Some(&self.accounts[i]);
+            }
+        }
+        None
+    }
+
+    /// Health peek for scoring: is any account available, and what is the
+    /// worst backoff level in the pool?
+    pub fn peek_health(&self) -> (bool, u32) {
+        let now = Instant::now();
+        let mut any_available = false;
+        let mut max_backoff = 0u32;
+        for acc in &self.accounts {
+            if acc.available(now) {
+                any_available = true;
+            }
+            max_backoff = max_backoff.max(acc.consecutive_errors);
+        }
+        (any_available, max_backoff)
+    }
+
     /// Report the outcome for a given account key.
     pub fn report(&mut self, key: &str, outcome: AccountOutcome) {
         let now = Instant::now();
@@ -225,6 +255,20 @@ impl AccountManager {
     pub fn next_key(&mut self, provider_id: &str) -> Option<String> {
         let pool = self.pools.get_mut(provider_id)?;
         pool.next_key().map(|a| a.key.clone())
+    }
+
+    /// Prefer a specific account (session affinity) if available.
+    pub fn prefer_key(&mut self, provider_id: &str, key: &str) -> Option<String> {
+        let pool = self.pools.get_mut(provider_id)?;
+        pool.prefer_key(key).map(|a| a.key.clone())
+    }
+
+    /// Health peek for scoring (available?, max backoff level).
+    pub fn peek_health(&self, provider_id: &str) -> (bool, u32) {
+        self.pools
+            .get(provider_id)
+            .map(|p| p.peek_health())
+            .unwrap_or((false, 0))
     }
 
     /// Report outcome for a provider+key.

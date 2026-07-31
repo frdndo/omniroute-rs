@@ -198,6 +198,68 @@ impl RoutingEngine {
         })
     }
 
+    /// Resolve model → RouteTarget, preferring a specific account key
+    /// (session affinity). Falls back to normal rotation when the preferred
+    /// account is cooling down or missing.
+    pub fn route_prefer(
+        &mut self,
+        model: &str,
+        preferred_account: Option<&str>,
+    ) -> Result<RouteTarget, ExecutorError> {
+        let provider_id = self.resolve_provider(model)?;
+
+        let account_key = if self.config.accounts.has_provider(provider_id) {
+            if let Some(pref) = preferred_account {
+                if let Some(k) = self.config.accounts.prefer_key(provider_id, pref) {
+                    k
+                } else {
+                    // preferred account unavailable → normal rotation
+                    self.config.accounts.next_key(provider_id).ok_or_else(|| {
+                        if self.config.accounts.all_cooling_down(provider_id) {
+                            ExecutorError::RateLimited(429)
+                        } else {
+                            ExecutorError::AuthFailed(0)
+                        }
+                    })?
+                }
+            } else {
+                self.config.accounts.next_key(provider_id).ok_or_else(|| {
+                    if self.config.accounts.all_cooling_down(provider_id) {
+                        ExecutorError::RateLimited(429)
+                    } else {
+                        ExecutorError::AuthFailed(0)
+                    }
+                })?
+            }
+        } else {
+            self.config
+                .api_keys
+                .get(provider_id)
+                .cloned()
+                .unwrap_or_default()
+        };
+
+        if account_key.is_empty() {
+            return Err(ExecutorError::AuthFailed(0));
+        }
+
+        let executor = ProviderExecutor::from_provider_id_with_base(
+            provider_id,
+            &account_key,
+            self.config.base_urls.get(provider_id).map(|s| s.as_str()),
+        )?;
+        Ok(RouteTarget {
+            provider_id: provider_id.to_string(),
+            account_key,
+            executor,
+        })
+    }
+
+    /// Health peek for the auto-combo scorer: (account available?, backoff).
+    pub fn peek_health(&self, provider_id: &str) -> (bool, u32) {
+        self.config.accounts.peek_health(provider_id)
+    }
+
     /// Report an upstream outcome so the account pool can rotate/cooldown.
     pub fn report(&mut self, provider_id: &str, key: &str, outcome: AccountOutcome) {
         self.config.accounts.report(provider_id, key, outcome);
@@ -367,6 +429,31 @@ mod tests {
             cfg.accounts.next_key("openai").is_none(),
             "rate-limited account should be in cooldown"
         );
+    }
+
+    #[test]
+    fn test_route_prefer_picks_preferred_account() {
+        let config =
+            RouterConfig::default().with_pool("openai", vec!["sk-1".into(), "sk-2".into()]);
+        let mut engine = RoutingEngine::new(config);
+
+        let t = engine.route_prefer("gpt-4o", Some("sk-2")).unwrap();
+        assert_eq!(t.account_key, "sk-2");
+
+        // Preferred account unavailable → normal rotation
+        engine.report("openai", "sk-2", AccountOutcome::RateLimited);
+        let t = engine.route_prefer("gpt-4o", Some("sk-2")).unwrap();
+        assert_ne!(t.account_key, "sk-2");
+    }
+
+    #[test]
+    fn test_peek_health() {
+        let config =
+            RouterConfig::default().with_pool("openai", vec!["sk-1".into(), "sk-2".into()]);
+        let engine = RoutingEngine::new(config);
+        let (available, backoff) = engine.peek_health("openai");
+        assert!(available);
+        assert_eq!(backoff, 0);
     }
 
     #[test]

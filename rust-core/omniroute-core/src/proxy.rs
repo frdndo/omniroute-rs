@@ -56,6 +56,7 @@ impl AppState {
                 if let Err(e) = new_combo.load_combos_from_db(db) {
                     tracing::warn!("reload combos failed: {}", e);
                 }
+                new_combo = new_combo.with_db(db.clone());
             }
             *combo = new_combo;
         }
@@ -123,16 +124,22 @@ async fn handle_health(State(state): State<AppState>) -> Json<serde_json::Value>
 
 /// Chat completion handler — routes via combo engine with fallback.
 /// Honors `stream: true` by returning an SSE response.
+/// Reads `X-Session-Id` header for G3 session affinity.
 async fn handle_chat(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<ChatRequest>,
 ) -> Result<axum::response::Response, (StatusCode, Json<serde_json::Value>)> {
+    let session_id = headers
+        .get("x-session-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
     if req.stream.unwrap_or(false) {
-        return handle_chat_stream(state, req).await;
+        return handle_chat_stream(state, req, session_id.as_deref()).await;
     }
 
     let mut combo = state.combo.write().await;
-    match combo.execute(&req).await {
+    match combo.execute(&req, session_id.as_deref()).await {
         Ok(result) => {
             let mut resp = crate::sanitize::sanitize_response(result.response);
             resp.model = result.used_model;
@@ -146,9 +153,10 @@ async fn handle_chat(
 async fn handle_chat_stream(
     state: AppState,
     req: ChatRequest,
+    session_id: Option<&str>,
 ) -> Result<axum::response::Response, (StatusCode, Json<serde_json::Value>)> {
     let mut combo = state.combo.write().await;
-    let attempt = match combo.execute_stream(&req).await {
+    let attempt = match combo.execute_stream(&req, session_id).await {
         Ok(a) => a,
         Err(e) => return Err(combo_error_response(e)),
     };

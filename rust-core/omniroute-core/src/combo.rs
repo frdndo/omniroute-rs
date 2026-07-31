@@ -88,6 +88,10 @@ pub struct ComboEngine {
     /// Per-provider fallback chains for auto-combo
     auto_fallbacks: HashMap<String, Vec<String>>,
     max_attempts: usize,
+    /// Shared DB handle — used for session affinity persistence
+    pub db: Option<std::sync::Arc<omniroute_db::Database>>,
+    /// Auto-combo scorer (G5): orders candidates by health/latency/concurrency
+    pub scorer: crate::scorer::ComboScorer,
 }
 
 impl ComboEngine {
@@ -97,7 +101,15 @@ impl ComboEngine {
             combos: HashMap::new(),
             auto_fallbacks: HashMap::new(),
             max_attempts: 5,
+            db: None,
+            scorer: crate::scorer::ComboScorer::new(),
         }
+    }
+
+    /// Attach the shared DB handle (session affinity + scoring persistence).
+    pub fn with_db(mut self, db: std::sync::Arc<omniroute_db::Database>) -> Self {
+        self.db = Some(db);
+        self
     }
 
     pub fn with_combo(mut self, combo: Combo) -> Self {
@@ -145,16 +157,39 @@ impl ComboEngine {
     /// 1. If the request model names a registered combo, use its chain
     /// 2. Else use the registered auto-fallback chain for the model
     /// 3. Else just the model itself
-    pub async fn execute(&mut self, req: &ChatRequest) -> Result<ComboResult, ComboError> {
-        let candidates = self.candidates(&req.model);
+    /// 4. Candidates are then score-ordered (G5 auto-combo)
+    ///
+    /// `session_id` (optional) enables G3 session affinity: the account used
+    /// for a session is preferred on subsequent turns.
+    pub async fn execute(
+        &mut self,
+        req: &ChatRequest,
+        session_id: Option<&str>,
+    ) -> Result<ComboResult, ComboError> {
+        let mut candidates = self.candidates(&req.model);
+        candidates = self.score_order(candidates);
         let mut attempts: Vec<AttemptRecord> = Vec::new();
+        let affinity = self.affinity_for(session_id);
 
         for (i, model) in candidates.iter().enumerate() {
             if i >= self.max_attempts {
                 break;
             }
 
-            let target = match self.router.route(model) {
+            // G3: prefer the session's account on the FIRST candidate only
+            // (later fallbacks rotate normally)
+            let preferred = if i == 0 {
+                affinity
+                    .as_ref()
+                    .filter(|(provider, _)| {
+                        provider == &self.resolve_provider_of(model).unwrap_or_default()
+                    })
+                    .map(|(_, key)| key.as_str())
+            } else {
+                None
+            };
+
+            let target = match self.router.route_prefer(model, preferred) {
                 Ok(t) => t,
                 Err(e) => {
                     attempts.push(AttemptRecord {
@@ -169,16 +204,25 @@ impl ComboEngine {
                 }
             };
 
+            self.scorer.begin_request(&target.provider_id);
+            let started = std::time::Instant::now();
             let mut attempt_req = req.clone();
             attempt_req.model = model.clone();
 
             match target.executor.execute_chat(&attempt_req).await {
                 Ok(resp) => {
+                    self.scorer
+                        .record_latency(&target.provider_id, started.elapsed().as_millis() as f64);
+                    self.scorer.end_request(&target.provider_id);
                     self.router.report(
                         &target.provider_id,
                         &target.account_key,
                         crate::account::AccountOutcome::Success,
                     );
+                    // G3: remember this account for the session
+                    if let Some(sid) = session_id {
+                        self.record_affinity(sid, &target.provider_id, &target.account_key);
+                    }
                     return Ok(ComboResult {
                         response: resp,
                         used_model: model.clone(),
@@ -187,6 +231,10 @@ impl ComboEngine {
                     });
                 }
                 Err(e) => {
+                    self.scorer
+                        .record_latency(&target.provider_id, started.elapsed().as_millis() as f64);
+                    self.scorer.record_failure(&target.provider_id);
+                    self.scorer.end_request(&target.provider_id);
                     let outcome = match &e {
                         ExecutorError::RateLimited(_) => {
                             crate::account::AccountOutcome::RateLimited
@@ -220,19 +268,96 @@ impl ComboEngine {
         })
     }
 
+    /// G5: order candidates by score (best provider health/latency first).
+    fn score_order(&self, candidates: Vec<String>) -> Vec<String> {
+        if candidates.len() <= 1 {
+            return candidates;
+        }
+        let mut scored: Vec<(f64, String)> = candidates
+            .into_iter()
+            .map(|m| {
+                let provider = self.resolve_provider_of(&m).unwrap_or_default();
+                let (available, backoff) = self.router.peek_health(&provider);
+                let s = self.scorer.score(&provider, available, backoff);
+                (s, m)
+            })
+            .collect();
+        // Stable sort: higher score first, ties keep original order
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        scored.into_iter().map(|(_, m)| m).collect()
+    }
+
+    fn resolve_provider_of(&self, model: &str) -> Option<String> {
+        // Reuse the router's deterministic resolution without consuming it
+        let lower = model.to_lowercase();
+        let known: &[(&str, &str)] = &[
+            ("gpt-", "openai"),
+            ("o1-", "openai"),
+            ("o3-", "openai"),
+            ("text-embedding", "openai"),
+            ("claude-", "claude"),
+            ("gemini-", "gemini"),
+            ("deepseek-", "deepseek"),
+        ];
+        for (prefix, provider) in known {
+            if lower.starts_with(prefix) {
+                return Some((*provider).to_string());
+            }
+        }
+        omniroute_providers::resolve_provider_for_model(model).map(String::from)
+    }
+
+    /// G3: look up the account a session is stuck to (DB).
+    fn affinity_for(&self, session_id: Option<&str>) -> Option<(String, String)> {
+        let sid = session_id?;
+        let db = self.db.as_ref()?;
+        let conn = db.conn.lock().ok()?;
+        omniroute_db::repos::session_affinity_repo::get(&conn, sid).ok()?
+    }
+
+    /// G3: persist session → account affinity after a successful call.
+    fn record_affinity(&self, session_id: &str, provider: &str, account_key: &str) {
+        let Some(db) = self.db.as_ref() else { return };
+        if let Ok(conn) = db.conn.lock() {
+            let _ = omniroute_db::repos::session_affinity_repo::upsert(
+                &conn,
+                session_id,
+                provider,
+                account_key,
+            );
+        }
+    }
+
     /// Stream a chat completion with fallback across candidates.
     /// Unlike non-streaming, once a stream is established from an upstream
     /// we commit to it (no mid-stream switching).
-    pub async fn execute_stream(&mut self, req: &ChatRequest) -> Result<StreamAttempt, ComboError> {
-        let candidates = self.candidates(&req.model);
+    pub async fn execute_stream(
+        &mut self,
+        req: &ChatRequest,
+        session_id: Option<&str>,
+    ) -> Result<StreamAttempt, ComboError> {
+        let mut candidates = self.candidates(&req.model);
+        candidates = self.score_order(candidates);
         let mut attempts: Vec<AttemptRecord> = Vec::new();
+        let affinity = self.affinity_for(session_id);
 
         for (i, model) in candidates.iter().enumerate() {
             if i >= self.max_attempts {
                 break;
             }
 
-            let target = match self.router.route(model) {
+            let preferred = if i == 0 {
+                affinity
+                    .as_ref()
+                    .filter(|(provider, _)| {
+                        provider == &self.resolve_provider_of(model).unwrap_or_default()
+                    })
+                    .map(|(_, key)| key.as_str())
+            } else {
+                None
+            };
+
+            let target = match self.router.route_prefer(model, preferred) {
                 Ok(t) => t,
                 Err(e) => {
                     attempts.push(AttemptRecord {
@@ -249,6 +374,9 @@ impl ComboEngine {
 
             match target.executor.execute_chat_stream(&attempt_req).await {
                 Ok(stream) => {
+                    if let Some(sid) = session_id {
+                        self.record_affinity(sid, &target.provider_id, &target.account_key);
+                    }
                     return Ok(StreamAttempt {
                         provider_id: target.provider_id.clone(),
                         account_key: target.account_key.clone(),
@@ -257,6 +385,7 @@ impl ComboEngine {
                     });
                 }
                 Err(e) => {
+                    self.scorer.record_failure(&target.provider_id);
                     let outcome = match &e {
                         ExecutorError::RateLimited(_) => {
                             crate::account::AccountOutcome::RateLimited
@@ -413,7 +542,10 @@ mod tests {
             .with_key("claude", "sk-y");
         let mut engine = ComboEngine::new(RoutingEngine::new(config))
             .with_fallback("gpt-4o", vec!["claude-sonnet-4".into()]);
-        let err = engine.execute(&test_request("gpt-4o")).await.unwrap_err();
+        let err = engine
+            .execute(&test_request("gpt-4o"), None)
+            .await
+            .unwrap_err();
         // Both attempts recorded (network errors → fallback triggered)
         assert_eq!(err.attempts.len(), 2);
     }
@@ -423,7 +555,10 @@ mod tests {
         // No API keys at all → each route fails fast, attempts recorded
         let mut engine = ComboEngine::new(RoutingEngine::new(RouterConfig::default()))
             .with_fallback("gpt-4o", vec!["deepseek-chat".into()]);
-        let err = engine.execute(&test_request("gpt-4o")).await.unwrap_err();
+        let err = engine
+            .execute(&test_request("gpt-4o"), None)
+            .await
+            .unwrap_err();
         assert!(!err.attempts.is_empty());
     }
 }

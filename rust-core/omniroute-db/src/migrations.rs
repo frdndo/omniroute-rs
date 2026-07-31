@@ -66,5 +66,17 @@ pub fn run_migrations(conn: &Connection) -> Result<(), anyhow::Error> {
         )?;
     }
 
+    // Migration v3: session → account affinity (multi-turn stickiness)
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS session_account_affinity (
+            session_id TEXT PRIMARY KEY,
+            provider TEXT NOT NULL,
+            account_key TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        ",
+    )?;
+
     Ok(())
 }
