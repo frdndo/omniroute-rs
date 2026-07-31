@@ -37,6 +37,16 @@ pub enum ApiFormat {
     Gemini,
 }
 
+impl std::fmt::Display for ApiFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ApiFormat::OpenAi => write!(f, "openai"),
+            ApiFormat::Claude => write!(f, "claude"),
+            ApiFormat::Gemini => write!(f, "gemini"),
+        }
+    }
+}
+
 /// HTTP executor that talks to a real provider upstream
 #[derive(Debug)]
 pub struct ProviderExecutor {
@@ -79,6 +89,25 @@ impl ProviderExecutor {
     /// upstream, and the response is normalized back to the OpenAI-compatible
     /// `ChatResponse` shape.
     pub async fn execute_chat(&self, req: &ChatRequest) -> Result<ChatResponse, ExecutorError> {
+        let started = std::time::Instant::now();
+        let result = self.execute_chat_inner(req).await;
+        match &result {
+            Ok(_) => tracing::info!(
+                "upstream {} ok in {} ms",
+                self.api_format,
+                started.elapsed().as_millis()
+            ),
+            Err(e) => tracing::warn!(
+                "upstream {} failed in {} ms: {}",
+                self.api_format,
+                started.elapsed().as_millis(),
+                e
+            ),
+        }
+        result
+    }
+
+    async fn execute_chat_inner(&self, req: &ChatRequest) -> Result<ChatResponse, ExecutorError> {
         let url = match self.api_format {
             ApiFormat::OpenAi => format!("{}/chat/completions", self.base_url),
             ApiFormat::Claude => format!("{}/messages", self.base_url),

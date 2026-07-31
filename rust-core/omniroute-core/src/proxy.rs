@@ -196,6 +196,8 @@ async fn handle_models() -> Json<serde_json::Value> {
 
 /// Build the HTTP proxy router
 pub fn build_router(state: AppState) -> Router {
+    use tower_http::trace::TraceLayer;
+
     let base = Router::new()
         .route("/health", get(handle_health))
         .route("/v1/chat/completions", axum::routing::post(handle_chat))
@@ -203,10 +205,40 @@ pub fn build_router(state: AppState) -> Router {
         .layer(CorsLayer::permissive())
         .with_state(state.clone());
 
-    crate::auth::harden_router(
+    let hardened = crate::auth::harden_router(
         base,
         state.gateway_keys.clone(),
         state.allowed_hosts.clone(),
+    );
+
+    // TraceLayer OUTERMOST → logs every request incl. auth rejections (401/403)
+    hardened.layer(
+        TraceLayer::new_for_http()
+            .make_span_with(|request: &axum::extract::Request| {
+                let method = request.method().to_string();
+                let uri = request.uri().path().to_string();
+                tracing::info_span!(
+                    "request",
+                    method = %method,
+                    uri = %uri,
+                    status = tracing::field::Empty,
+                    duration_ms = tracing::field::Empty
+                )
+            })
+            .on_response(|response: &axum::http::Response<axum::body::Body>, latency: std::time::Duration, span: &tracing::Span| {
+                span.record("status", response.status().as_u16());
+                span.record("duration_ms", latency.as_millis() as u64);
+                tracing::info!(
+                    parent: span,
+                    "→ {} ({} ms)",
+                    response.status().as_u16(),
+                    latency.as_millis()
+                );
+            })
+            .on_failure(|_error, latency: std::time::Duration, span: &tracing::Span| {
+                span.record("duration_ms", latency.as_millis() as u64);
+                tracing::error!(parent: span, "✗ request failed after {} ms", latency.as_millis());
+            }),
     )
 }
 
