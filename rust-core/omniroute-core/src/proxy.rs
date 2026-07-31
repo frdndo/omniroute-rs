@@ -17,6 +17,8 @@ pub struct AppState {
     pub combo: ComboEngine,
     pub gateway_keys: GatewayKeys,
     pub allowed_hosts: AllowedHosts,
+    pub admin_keys: crate::admin::AdminKeys,
+    pub db_path: String,
 }
 
 impl AppState {
@@ -27,6 +29,8 @@ impl AppState {
             combo: ComboEngine::new(RoutingEngine::new(RouterConfig::default())),
             gateway_keys: GatewayKeys::default(),
             allowed_hosts: AllowedHosts::default(),
+            admin_keys: crate::admin::AdminKeys::default(),
+            db_path: "./data/omniroute.db".to_string(),
         }
     }
 
@@ -44,6 +48,21 @@ impl AppState {
         self.allowed_hosts = AllowedHosts::new(hosts);
         self
     }
+
+    pub fn with_admin_keys(mut self, keys: crate::admin::AdminKeys) -> Self {
+        self.admin_keys = keys;
+        self
+    }
+
+    pub fn with_db_path(mut self, path: &str) -> Self {
+        self.db_path = path.to_string();
+        self
+    }
+}
+
+/// Build the /admin sub-router for an AppState (admin keys + db path).
+fn admin_router_from_state(state: &AppState) -> Router {
+    crate::admin::build_admin_router(state.clone(), state.admin_keys.clone())
 }
 
 /// Health check handler
@@ -202,6 +221,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/health", get(handle_health))
         .route("/v1/chat/completions", axum::routing::post(handle_chat))
         .route("/v1/models", get(handle_models))
+        .nest_service("/admin", admin_router_from_state(&state))
         .layer(CorsLayer::permissive())
         .with_state(state.clone());
 
@@ -244,10 +264,14 @@ pub fn build_router(state: AppState) -> Router {
 
 /// Start the proxy server on the given port
 pub async fn start_server(port: u16, version: &str) {
+    let db_path =
+        std::env::var("OMNIROUTE_DB_PATH").unwrap_or_else(|_| "./data/omniroute.db".into());
     let state = AppState::new(version)
         .with_router(RouterConfig::from_env())
         .with_gateway_keys(crate::config::gateway_keys_from_env())
-        .with_allowed_hosts(crate::config::allowed_hosts_from_env());
+        .with_allowed_hosts(crate::config::allowed_hosts_from_env())
+        .with_admin_keys(crate::admin::AdminKeys::from_env())
+        .with_db_path(&db_path);
     let app = with_rate_limit(build_router(state));
 
     let addr = format!("0.0.0.0:{}", port);
@@ -470,5 +494,134 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // ── Admin CRUD tests (temp SQLite DB) ──────────────────────────
+
+    fn admin_state() -> (AppState, String) {
+        let dir = std::env::temp_dir().join(format!("omniroute-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("test.db").to_string_lossy().to_string();
+        let state = AppState::new("test")
+            .with_db_path(&db_path)
+            .with_admin_keys(crate::admin::AdminKeys::new(vec!["admin-1".into()]));
+        (state, db_path)
+    }
+
+    #[tokio::test]
+    async fn test_admin_disabled_without_keys() {
+        let state = AppState::new("test");
+        let app = build_router(state);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/providers")
+                    .method(Method::GET)
+                    .header("Authorization", "Bearer whatever")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Fail closed: no admin keys → 503
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn test_admin_requires_valid_key() {
+        let (state, _db) = admin_state();
+        let app = build_router(state);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/providers")
+                    .method(Method::GET)
+                    .header("Authorization", "Bearer wrong")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_admin_crud_flow() {
+        let (state, _db) = admin_state();
+        let app = build_router(state);
+
+        // Create provider connection
+        let create = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/providers")
+                    .method(Method::POST)
+                    .header("Authorization", "Bearer admin-1")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "provider": "openai",
+                            "name": "primary",
+                            "api_key": "sk-super-secret-12345678",
+                            "is_active": true
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create.status(), StatusCode::CREATED);
+
+        // List → key must be masked
+        let list = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/providers")
+                    .method(Method::GET)
+                    .header("Authorization", "Bearer admin-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(list.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(list.into_body(), 4 * 1024 * 1024)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["data"].as_array().unwrap().len(), 1);
+        let key = json["data"][0]["api_key"].as_str().unwrap();
+        assert!(key.contains("****"), "key must be masked, got {}", key);
+        assert!(!key.contains("super-secret"), "raw key leaked!");
+    }
+
+    #[tokio::test]
+    async fn test_admin_create_api_key_returns_full_key_once() {
+        let (state, _db) = admin_state();
+        let app = build_router(state);
+
+        let create = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/api-keys")
+                    .method(Method::POST)
+                    .header("Authorization", "Bearer admin-1")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"name": "client-a"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(create.into_body(), 4 * 1024 * 1024)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["key"].as_str().unwrap().starts_with("sk-"));
     }
 }

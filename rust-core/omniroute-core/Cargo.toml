@@ -28,3 +28,4 @@ chrono.workspace = true
 reqwest.workspace = true
 futures.workspace = true
 bytes.workspace = true
+rusqlite.workspace = true
