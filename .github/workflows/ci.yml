@@ -37,9 +37,9 @@ jobs:
         working-directory: rust-core
 
       - name: Audit
-        run: cargo audit
-        continue-on-error: true
-        working-directory: rust-core
+        uses: rustsec/actions-cargo-audit@v2
+        with:
+          working-directory: rust-core
 
   napi-build:
     runs-on: ubuntu-latest
