@@ -41,7 +41,7 @@ async fn handle_health(State(state): State<AppState>) -> Json<serde_json::Value>
 
 /// Chat completion handler — routes via combo engine with fallback
 async fn handle_chat(
-    State(state): State<AppState>,
+    State(mut state): State<AppState>,
     Json(req): Json<ChatRequest>,
 ) -> Result<Json<ChatResponse>, (StatusCode, Json<serde_json::Value>)> {
     match state.combo.execute(&req).await {

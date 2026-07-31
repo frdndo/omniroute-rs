@@ -115,7 +115,7 @@ impl ComboEngine {
     /// 1. If the request model names a registered combo, use its chain
     /// 2. Else use the registered auto-fallback chain for the model
     /// 3. Else just the model itself
-    pub async fn execute(&self, req: &ChatRequest) -> Result<ComboResult, ComboError> {
+    pub async fn execute(&mut self, req: &ChatRequest) -> Result<ComboResult, ComboError> {
         let candidates = self.candidates(&req.model);
         let mut attempts: Vec<AttemptRecord> = Vec::new();
 
@@ -144,6 +144,11 @@ impl ComboEngine {
 
             match target.executor.execute_chat(&attempt_req).await {
                 Ok(resp) => {
+                    self.router.report(
+                        &target.provider_id,
+                        &target.account_key,
+                        crate::account::AccountOutcome::Success,
+                    );
                     return Ok(ComboResult {
                         response: resp,
                         used_model: model.clone(),
@@ -152,6 +157,15 @@ impl ComboEngine {
                     });
                 }
                 Err(e) => {
+                    let outcome = match &e {
+                        ExecutorError::RateLimited(_) => {
+                            crate::account::AccountOutcome::RateLimited
+                        }
+                        ExecutorError::AuthFailed(_) => crate::account::AccountOutcome::AuthFailed,
+                        _ => crate::account::AccountOutcome::RateLimited,
+                    };
+                    self.router
+                        .report(&target.provider_id, &target.account_key, outcome);
                     warn!(
                         model = %model,
                         provider = %target.provider_id,
@@ -306,7 +320,7 @@ mod tests {
         let config = RouterConfig::default()
             .with_key("openai", "sk-x")
             .with_key("claude", "sk-y");
-        let engine = ComboEngine::new(RoutingEngine::new(config))
+        let mut engine = ComboEngine::new(RoutingEngine::new(config))
             .with_fallback("gpt-4o", vec!["claude-sonnet-4".into()]);
         let err = engine.execute(&test_request("gpt-4o")).await.unwrap_err();
         // Both attempts recorded (network errors → fallback triggered)
@@ -316,7 +330,7 @@ mod tests {
     #[tokio::test]
     async fn test_missing_keys_short_circuit() {
         // No API keys at all → each route fails fast, attempts recorded
-        let engine = ComboEngine::new(RoutingEngine::new(RouterConfig::default()))
+        let mut engine = ComboEngine::new(RoutingEngine::new(RouterConfig::default()))
             .with_fallback("gpt-4o", vec!["deepseek-chat".into()]);
         let err = engine.execute(&test_request("gpt-4o")).await.unwrap_err();
         assert!(!err.attempts.is_empty());
