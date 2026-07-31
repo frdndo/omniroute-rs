@@ -7,6 +7,7 @@ pub mod executor;
 pub mod proxy;
 pub mod ratelimit;
 pub mod router;
+pub mod sanitize;
 pub mod sse;
 pub mod translator;
 

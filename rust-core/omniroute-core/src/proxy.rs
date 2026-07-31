@@ -5,6 +5,7 @@ use tower_http::cors::CorsLayer;
 use crate::auth::{AllowedHosts, GatewayKeys};
 use crate::chat::ChatRequest;
 use crate::combo::ComboEngine;
+use crate::executor::ExecutorError;
 use crate::ratelimit::with_rate_limit;
 use crate::router::{RouterConfig, RoutingEngine};
 
@@ -67,7 +68,7 @@ async fn handle_chat(
 
     match state.combo.execute(&req).await {
         Ok(result) => {
-            let mut resp = result.response;
+            let mut resp = crate::sanitize::sanitize_response(result.response);
             resp.model = result.used_model;
             Ok(axum::Json(resp).into_response())
         }
@@ -108,21 +109,70 @@ async fn handle_chat_stream(
 fn combo_error_response(e: crate::combo::ComboError) -> (StatusCode, Json<serde_json::Value>) {
     let last = e.attempts.last();
     let provider = last.and_then(|a| a.provider.clone()).unwrap_or_default();
-    (
-        StatusCode::BAD_GATEWAY,
-        Json(serde_json::json!({
-            "error": {
-                "message": e.to_string(),
-                "type": "upstream_error",
-                "provider": provider,
-                "attempts": e.attempts.iter().map(|a| serde_json::json!({
-                    "model": a.model,
-                    "provider": a.provider,
-                    "error": a.error,
-                })).collect::<Vec<_>>(),
-            }
-        })),
-    )
+
+    // Map status from the last error if it's a direct executor error
+    let (status, body) = if let Some(err) = last {
+        if let Ok(parsed) = parse_executor_error(&err.error) {
+            crate::sanitize::error_to_response(&parsed, Some(&provider))
+        } else {
+            (
+                StatusCode::BAD_GATEWAY,
+                serde_json::json!({
+                    "error": {
+                        "message": err.error,
+                        "type": "upstream_error",
+                        "provider": provider,
+                    }
+                }),
+            )
+        }
+    } else {
+        (
+            StatusCode::BAD_GATEWAY,
+            serde_json::json!({
+                "error": {
+                    "message": e.to_string(),
+                    "type": "upstream_error",
+                    "provider": provider,
+                }
+            }),
+        )
+    };
+
+    // Attach attempts detail
+    let mut body = body;
+    body["error"]["attempts"] = serde_json::json!(
+        e.attempts
+            .iter()
+            .map(|a| serde_json::json!({
+                "model": a.model,
+                "provider": a.provider,
+                "error": a.error,
+            }))
+            .collect::<Vec<_>>()
+    );
+
+    (status, Json(body))
+}
+
+/// Best-effort parse of an ExecutorError from its Display string.
+/// Falls back to Network if unparseable.
+fn parse_executor_error(s: &str) -> Result<ExecutorError, ()> {
+    if s.contains("rate limited") {
+        Ok(ExecutorError::RateLimited(429))
+    } else if s.contains("authentication failed") {
+        Ok(ExecutorError::AuthFailed(401))
+    } else if s.contains("timeout") {
+        Ok(ExecutorError::Timeout(120))
+    } else if s.contains("network error") {
+        Ok(ExecutorError::Network(s.to_string()))
+    } else if s.contains("no provider registered") {
+        Ok(ExecutorError::UnsupportedProvider(s.to_string()))
+    } else if s.contains("upstream error") {
+        Ok(ExecutorError::Upstream(502, s.to_string()))
+    } else {
+        Err(())
+    }
 }
 
 /// List available models
@@ -251,13 +301,14 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        // Unknown model → 400 invalid_request_error (UnsupportedProvider)
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
         let body = axum::body::to_bytes(response.into_body(), 4 * 1024 * 1024)
             .await
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["error"]["type"], "upstream_error");
+        assert_eq!(json["error"]["type"], "invalid_request_error");
         assert!(!json["error"]["attempts"].as_array().unwrap().is_empty());
     }
 
@@ -283,14 +334,14 @@ mod tests {
             )
             .await
             .unwrap();
-        // Missing API key surfaces as upstream error (502) with attempts detail
-        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        // Missing API key → 401 authentication_error (AuthFailed)
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
         let body = axum::body::to_bytes(response.into_body(), 4 * 1024 * 1024)
             .await
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["error"]["type"], "upstream_error");
+        assert_eq!(json["error"]["type"], "authentication_error");
     }
 
     #[tokio::test]
