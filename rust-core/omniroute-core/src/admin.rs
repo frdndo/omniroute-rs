@@ -85,11 +85,17 @@ fn mask_key(key: &str) -> String {
 }
 
 fn with_db<T>(
-    db_path: &str,
+    state: &crate::proxy::AppState,
     f: impl FnOnce(&rusqlite::Connection) -> Result<T, String>,
 ) -> Result<T, String> {
-    let db =
-        omniroute_db::Database::open(std::path::Path::new(db_path)).map_err(|e| e.to_string())?;
+    // Prefer the shared DB handle (opened once at startup)
+    if let Some(db) = &state.db {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        return f(&conn);
+    }
+    // Fallback: open a fresh connection (tests, admin-only mode)
+    let db = omniroute_db::Database::open(std::path::Path::new(&state.db_path))
+        .map_err(|e| e.to_string())?;
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     f(&conn)
 }
@@ -99,7 +105,7 @@ fn with_db<T>(
 pub async fn list_provider_connections(
     State(state): State<crate::proxy::AppState>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let items = with_db(&state.db_path, |conn| {
+    let items = with_db(&state, |conn| {
         provider_connection_repo::get_all(conn).map_err(|e| e.to_string())
     })
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
@@ -135,6 +141,8 @@ pub async fn create_provider_connection(
         is_active: body["is_active"].as_bool().unwrap_or(true),
         priority: body["priority"].as_i64().map(|i| i as i32),
         data: body["data"].clone(),
+        rate_limited_until: body["rate_limited_until"].as_str().map(String::from),
+        backoff_level: body["backoff_level"].as_i64().map(|i| i as i32),
         created_at: now.clone(),
         updated_at: now,
     };
@@ -142,7 +150,7 @@ pub async fn create_provider_connection(
         return Err((StatusCode::BAD_REQUEST, "provider is required".into()));
     }
 
-    with_db(&state.db_path, |c| {
+    with_db(&state, |c| {
         provider_connection_repo::insert(c, &conn).map_err(|e| e.to_string())
     })
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
@@ -155,7 +163,7 @@ pub async fn update_provider_connection(
     Path(id): Path<String>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let mut item = with_db(&state.db_path, |c| {
+    let mut item = with_db(&state, |c| {
         provider_connection_repo::get_by_id(c, &id).map_err(|e| e.to_string())
     })
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
@@ -175,7 +183,7 @@ pub async fn update_provider_connection(
     }
     item.updated_at = chrono::Utc::now().to_rfc3339();
 
-    with_db(&state.db_path, |c| {
+    with_db(&state, |c| {
         provider_connection_repo::update(c, &item).map_err(|e| e.to_string())
     })
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
@@ -187,7 +195,7 @@ pub async fn delete_provider_connection(
     State(state): State<crate::proxy::AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    with_db(&state.db_path, |c| {
+    with_db(&state, |c| {
         provider_connection_repo::delete(c, &id).map_err(|e| e.to_string())
     })
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
@@ -197,7 +205,7 @@ pub async fn delete_provider_connection(
 pub async fn list_api_keys(
     State(state): State<crate::proxy::AppState>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let items = with_db(&state.db_path, |c| {
+    let items = with_db(&state, |c| {
         api_key_repo::get_all(c).map_err(|e| e.to_string())
     })
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
@@ -232,7 +240,7 @@ pub async fn create_api_key(
         created_at: now,
     };
 
-    with_db(&state.db_path, |c| {
+    with_db(&state, |c| {
         api_key_repo::insert(c, &item).map_err(|e| e.to_string())
     })
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
@@ -247,7 +255,7 @@ pub async fn delete_api_key(
     State(state): State<crate::proxy::AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    with_db(&state.db_path, |c| {
+    with_db(&state, |c| {
         api_key_repo::delete(c, &id).map_err(|e| e.to_string())
     })
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;

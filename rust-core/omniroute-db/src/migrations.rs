@@ -47,5 +47,24 @@ pub fn run_migrations(conn: &Connection) -> Result<(), anyhow::Error> {
         );
         ",
     )?;
+
+    // Migration v2: health tracking fields (match OmniRoute provider_connections)
+    let cols: Vec<String> = conn
+        .prepare("PRAGMA table_info(providerConnections)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<_, _>>()?;
+    if !cols.iter().any(|c| c == "rate_limited_until") {
+        conn.execute(
+            "ALTER TABLE providerConnections ADD COLUMN rate_limited_until TEXT",
+            [],
+        )?;
+    }
+    if !cols.iter().any(|c| c == "backoff_level") {
+        conn.execute(
+            "ALTER TABLE providerConnections ADD COLUMN backoff_level INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+
     Ok(())
 }

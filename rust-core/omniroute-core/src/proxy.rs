@@ -19,6 +19,7 @@ pub struct AppState {
     pub allowed_hosts: AllowedHosts,
     pub admin_keys: crate::admin::AdminKeys,
     pub db_path: String,
+    pub db: Option<std::sync::Arc<omniroute_db::Database>>,
 }
 
 impl AppState {
@@ -31,6 +32,7 @@ impl AppState {
             allowed_hosts: AllowedHosts::default(),
             admin_keys: crate::admin::AdminKeys::default(),
             db_path: "./data/omniroute.db".to_string(),
+            db: None,
         }
     }
 
@@ -56,6 +58,11 @@ impl AppState {
 
     pub fn with_db_path(mut self, path: &str) -> Self {
         self.db_path = path.to_string();
+        self
+    }
+
+    pub fn with_db(mut self, db: Option<std::sync::Arc<omniroute_db::Database>>) -> Self {
+        self.db = db;
         self
     }
 }
@@ -266,12 +273,34 @@ pub fn build_router(state: AppState) -> Router {
 pub async fn start_server(port: u16, version: &str) {
     let db_path =
         std::env::var("OMNIROUTE_DB_PATH").unwrap_or_else(|_| "./data/omniroute.db".into());
+
+    // Open shared SQLite DB once, then load active connections into routing
+    // (DB is primary source; env keys fall back for providers without rows).
+    let mut config = RouterConfig::from_env();
+    let db = omniroute_db::Database::open(std::path::Path::new(&db_path));
+    let db = match db {
+        Ok(d) => {
+            tracing::info!("SQLite ready: {}", db_path);
+            let arc = std::sync::Arc::new(d);
+            if let Err(e) = config.load_from_db(&arc) {
+                tracing::warn!("failed loading provider connections from DB: {}", e);
+            }
+            config = config.with_db_persistence(arc.clone());
+            Some(arc)
+        }
+        Err(e) => {
+            tracing::warn!("SQLite unavailable ({}), routing from env only", e);
+            None
+        }
+    };
+
     let state = AppState::new(version)
-        .with_router(RouterConfig::from_env())
+        .with_router(config)
         .with_gateway_keys(crate::config::gateway_keys_from_env())
         .with_allowed_hosts(crate::config::allowed_hosts_from_env())
         .with_admin_keys(crate::admin::AdminKeys::from_env())
-        .with_db_path(&db_path);
+        .with_db_path(&db_path)
+        .with_db(db);
     let app = with_rate_limit(build_router(state));
 
     let addr = format!("0.0.0.0:{}", port);

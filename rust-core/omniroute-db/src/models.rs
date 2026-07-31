@@ -12,6 +12,10 @@ pub struct ProviderConnection {
     pub is_active: bool,
     pub priority: Option<i32>,
     pub data: serde_json::Value,
+    #[serde(default)]
+    pub rate_limited_until: Option<String>,
+    #[serde(default)]
+    pub backoff_level: Option<i32>,
     pub created_at: String,
     pub updated_at: String,
 }

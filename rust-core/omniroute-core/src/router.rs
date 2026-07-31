@@ -1,5 +1,6 @@
 use crate::account::{AccountManager, AccountOutcome};
 use crate::executor::{ExecutorError, ProviderExecutor};
+use omniroute_db::repos::provider_connection_repo;
 use std::collections::HashMap;
 
 /// Route resolution result: which provider + executor to use
@@ -73,6 +74,47 @@ impl RouterConfig {
     pub fn with_base_url(mut self, provider: &str, url: &str) -> Self {
         self.base_urls.insert(provider.to_string(), url.to_string());
         self
+    }
+
+    /// Enable SQLite persistence of account health (cooldown/backoff).
+    pub fn with_db_persistence(mut self, db: std::sync::Arc<omniroute_db::Database>) -> Self {
+        self.accounts = std::mem::take(&mut self.accounts).with_persistence(db);
+        self
+    }
+
+    /// Load active provider connections from SQLite into account pools.
+    /// Priority-ordered; rate-limited connections get an initial cooldown.
+    /// DB is the primary source — env keys remain as fallback for providers
+    /// without DB entries (matches OmniRoute: env = virtual connections).
+    pub fn load_from_db(&mut self, db: &omniroute_db::Database) -> Result<(), String> {
+        let connections = {
+            let conn = db.conn.lock().map_err(|e| e.to_string())?;
+            provider_connection_repo::get_active(&conn).map_err(|e| e.to_string())?
+        };
+
+        for c in connections {
+            let Some(key) = c.api_key.as_deref().filter(|k| !k.is_empty()) else {
+                continue;
+            };
+            let cooldown_secs = c
+                .rate_limited_until
+                .as_deref()
+                .and_then(|t| {
+                    chrono::DateTime::parse_from_rfc3339(t)
+                        .ok()
+                        .map(|d| d.with_timezone(&chrono::Utc))
+                })
+                .map(|t| (t - chrono::Utc::now()).num_seconds().max(0) as u64)
+                .unwrap_or(0);
+
+            if cooldown_secs > 0 {
+                self.accounts
+                    .add_connection_cooled(&c.provider, key, &c.id, cooldown_secs);
+            } else {
+                self.accounts.add_connection(&c.provider, key, &c.id);
+            }
+        }
+        Ok(())
     }
 }
 
@@ -219,6 +261,112 @@ mod tests {
         assert_eq!(target.provider_id, "claude");
         assert_eq!(target.account_key, "sk-ant");
         assert_eq!(target.executor.api_format(), ApiFormat::Claude);
+    }
+
+    #[test]
+    fn test_load_from_db_creates_pools() {
+        // Temp DB with two active openai connections (priority order)
+        let dir = std::env::temp_dir().join(format!("omniroute-rt-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.db");
+        let db = omniroute_db::Database::open(&path).unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            use omniroute_db::models::ProviderConnection;
+            use omniroute_db::repos::provider_connection_repo as r;
+            let now = "2026-01-01T00:00:00Z".to_string();
+            for (id, prio) in [("c1", 1), ("c2", 2)] {
+                r::insert(
+                    &conn,
+                    &ProviderConnection {
+                        id: id.into(),
+                        provider: "openai".into(),
+                        auth_type: Some("apikey".into()),
+                        name: None,
+                        email: None,
+                        api_key: Some(format!("sk-{id}")),
+                        is_active: true,
+                        priority: Some(prio),
+                        data: serde_json::json!({}),
+                        rate_limited_until: None,
+                        backoff_level: Some(0),
+                        created_at: now.clone(),
+                        updated_at: now.clone(),
+                    },
+                )
+                .unwrap();
+            }
+        }
+
+        let mut cfg = RouterConfig::default();
+        cfg.load_from_db(&db).unwrap();
+        assert_eq!(cfg.accounts.pool_len("openai"), 2);
+        assert_eq!(cfg.accounts.next_key("openai").unwrap(), "sk-c1");
+        assert_eq!(cfg.accounts.next_key("openai").unwrap(), "sk-c2");
+    }
+
+    #[test]
+    fn test_load_from_db_skips_inactive_and_sets_cooldown() {
+        let dir = std::env::temp_dir().join(format!("omniroute-rt2-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.db");
+        let db = omniroute_db::Database::open(&path).unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            use omniroute_db::models::ProviderConnection;
+            use omniroute_db::repos::provider_connection_repo as r;
+            let now = "2026-01-01T00:00:00Z".to_string();
+            // inactive → skipped
+            r::insert(
+                &conn,
+                &ProviderConnection {
+                    id: "dead".into(),
+                    provider: "openai".into(),
+                    auth_type: None,
+                    name: None,
+                    email: None,
+                    api_key: Some("sk-dead".into()),
+                    is_active: false,
+                    priority: Some(1),
+                    data: serde_json::json!({}),
+                    rate_limited_until: None,
+                    backoff_level: Some(0),
+                    created_at: now.clone(),
+                    updated_at: now.clone(),
+                },
+            )
+            .unwrap();
+            // rate-limited in the future → starts in cooldown
+            let future = (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
+            let now2 = now.clone();
+            r::insert(
+                &conn,
+                &ProviderConnection {
+                    id: "rl".into(),
+                    provider: "openai".into(),
+                    auth_type: None,
+                    name: None,
+                    email: None,
+                    api_key: Some("sk-rl".into()),
+                    is_active: true,
+                    priority: Some(1),
+                    data: serde_json::json!({}),
+                    rate_limited_until: Some(future),
+                    backoff_level: Some(2),
+                    created_at: now2,
+                    updated_at: now,
+                },
+            )
+            .unwrap();
+        }
+
+        let mut cfg = RouterConfig::default();
+        cfg.load_from_db(&db).unwrap();
+        assert_eq!(cfg.accounts.pool_len("openai"), 1, "inactive skipped");
+        assert!(
+            cfg.accounts.next_key("openai").is_none(),
+            "rate-limited account should be in cooldown"
+        );
     }
 
     #[test]
