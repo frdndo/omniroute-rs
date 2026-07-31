@@ -288,23 +288,8 @@ impl ComboEngine {
     }
 
     fn resolve_provider_of(&self, model: &str) -> Option<String> {
-        // Reuse the router's deterministic resolution without consuming it
-        let lower = model.to_lowercase();
-        let known: &[(&str, &str)] = &[
-            ("gpt-", "openai"),
-            ("o1-", "openai"),
-            ("o3-", "openai"),
-            ("text-embedding", "openai"),
-            ("claude-", "claude"),
-            ("gemini-", "gemini"),
-            ("deepseek-", "deepseek"),
-        ];
-        for (prefix, provider) in known {
-            if lower.starts_with(prefix) {
-                return Some((*provider).to_string());
-            }
-        }
-        omniroute_providers::resolve_provider_for_model(model).map(String::from)
+        // Reuse the router's deterministic resolution (single source of truth)
+        self.router.resolve_provider(model).ok().map(String::from)
     }
 
     /// G3: look up the account a session is stuck to (DB).
