@@ -3,6 +3,7 @@ use crate::executor::{ApiFormat, ExecutorError};
 use serde_json::{Value, json};
 
 /// Convert a normalized `ChatRequest` into the provider's native wire format.
+#[allow(clippy::collapsible_if)]
 pub fn build_upstream_request(
     format: ApiFormat,
     req: &ChatRequest,
@@ -86,6 +87,7 @@ fn build_openai(req: &ChatRequest) -> Result<Value, ExecutorError> {
 }
 
 /// Claude Messages API wants system prompt separate from messages.
+#[allow(clippy::collapsible_if)]
 fn build_claude(req: &ChatRequest) -> Result<Value, ExecutorError> {
     let mut messages: Vec<Value> = Vec::new();
     let mut system: Option<String> = None;
@@ -134,12 +136,17 @@ fn build_claude(req: &ChatRequest) -> Result<Value, ExecutorError> {
         body["stop_sequences"] = json!(stop);
     }
     if let Some(tools) = &req.tools {
-        body["tools"] = serde_json::to_value(tools).unwrap_or_default();
+        if let Some(converted) =
+            crate::translator::ToolTranslator::translate_tools(ApiFormat::Claude, tools)
+        {
+            body["tools"] = converted;
+        }
     }
     Ok(body)
 }
 
 /// Gemini generateContent format.
+#[allow(clippy::collapsible_if)]
 fn build_gemini(req: &ChatRequest) -> Result<Value, ExecutorError> {
     let contents: Vec<Value> = req
         .messages
@@ -175,6 +182,13 @@ fn build_gemini(req: &ChatRequest) -> Result<Value, ExecutorError> {
     }
     if !gen_config.is_empty() {
         body["generationConfig"] = Value::Object(gen_config);
+    }
+    if let Some(tools) = &req.tools {
+        if let Some(converted) =
+            crate::translator::ToolTranslator::translate_tools(ApiFormat::Gemini, tools)
+        {
+            body["tools"] = converted;
+        }
     }
     Ok(body)
 }

@@ -124,9 +124,16 @@ fn parse_claude(model: &str, v: &Value) -> Result<ChatResponse, ExecutorError> {
             index: 0,
             message: Message {
                 role: "assistant".into(),
-                content: Some(Content::Text(text)),
+                content: if text.is_empty() {
+                    None
+                } else {
+                    Some(Content::Text(text))
+                },
                 name: None,
-                tool_calls: None,
+                tool_calls: {
+                    let calls = crate::translator::ToolTranslator::parse_claude_tool_calls(v);
+                    if calls.is_empty() { None } else { Some(calls) }
+                },
                 tool_call_id: None,
             },
             finish_reason: Some(
@@ -184,9 +191,16 @@ fn parse_gemini(model: &str, v: &Value) -> Result<ChatResponse, ExecutorError> {
             index: 0,
             message: Message {
                 role: "assistant".into(),
-                content: Some(Content::Text(text)),
+                content: if text.is_empty() {
+                    None
+                } else {
+                    Some(Content::Text(text))
+                },
                 name: None,
-                tool_calls: None,
+                tool_calls: {
+                    let calls = crate::translator::ToolTranslator::parse_gemini_tool_calls(v);
+                    if calls.is_empty() { None } else { Some(calls) }
+                },
                 tool_call_id: None,
             },
             finish_reason: Some(

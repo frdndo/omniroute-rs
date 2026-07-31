@@ -7,6 +7,7 @@ pub mod proxy;
 pub mod ratelimit;
 pub mod router;
 pub mod sse;
+pub mod translator;
 
 use napi_derive::napi;
 use omniroute_db::Database;
