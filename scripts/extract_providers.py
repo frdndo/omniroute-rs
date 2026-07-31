@@ -63,9 +63,9 @@ shared_model_lists = {}  # constName.providerKey -> [ids]  AND  constName -> [id
 for name, text in consts.items():
     if "Record<string, RegistryModel[]>" in shared_src[max(0, shared_src.find(name)-200):shared_src.find(name)+len(name)]:
         pass
-    # provider-keyed map: { deepinfra: buildModels([...]), ... }
-    for mm in re.finditer(r'(\w+):\s*(buildModels\(\[.*?\]\)|\[.*?\])', text, re.S):
-        key, val = mm.group(1), mm.group(2)
+    # provider-keyed map: { deepinfra: buildModels([...]), "meta-llama": [...], ... }
+    for mm in re.finditer(r'(?:"([\w-]+)"|(\w+)):\s*(buildModels\(\[.*?\]\)|\[.*?\])', text, re.S):
+        key, val = mm.group(1) or mm.group(2), mm.group(3)
         shared_model_lists[f"{name}.{key}"] = buildmodels_ids(val)
     # plain array
     ids = buildmodels_ids(text)
@@ -103,6 +103,52 @@ for cfg in glob.glob(os.path.join(BASE, "..", "*.ts")):
                     shared_model_lists[cname].append(mid)
 
 # ── Parse each registry entry ──────────────────────────────────────────
+# Global index of named consts across ALL registry files (cross-dir refs)
+global_model_consts = {}  # name -> flat ids (inline only)
+global_model_blocks = {}  # name -> raw source block (for spread expansion)
+for _f in glob.glob(f"{REG}/**/index.ts", recursive=True):
+    _s = open(_f, encoding="utf-8", errors="ignore").read()
+    for _cm in re.finditer(r"(?:export )?const (\w+)[^=]*=\s*(?:Object\.freeze\(\s*)?([\[{])", _s):
+        _cname, _opener = _cm.group(1), _cm.group(2)
+        _closer = "}" if _opener == "{" else "]"
+        _cstart = _cm.start(2)
+        _depth, _k, _in_str = 0, _cstart, False
+        while _k < len(_s):
+            _c = _s[_k]
+            if _c == '"' and (_k == 0 or _s[_k - 1] != "\\"):
+                _in_str = not _in_str
+            if not _in_str:
+                if _c == _opener:
+                    _depth += 1
+                elif _c == _closer:
+                    _depth -= 1
+                    if _depth == 0:
+                        break
+            _k += 1
+        _block = _s[_cstart:_k + 1]
+        global_model_blocks.setdefault(_cname, _block)
+        global_model_consts.setdefault(_cname, [])
+        for _mid in buildmodels_ids(_block):
+            if _mid not in global_model_consts[_cname]:
+                global_model_consts[_cname].append(_mid)
+
+
+def expand_const(ident, depth=0):
+    """Resolve a const's model ids, expanding nested [...OTHER] spreads."""
+    if depth > 5 or ident not in global_model_blocks:
+        return []
+    block = global_model_blocks[ident]
+    ids = buildmodels_ids(block)
+    for ref in re.finditer(r"\.\.\.(\w+)", block):
+        ids += expand_const(ref.group(1), depth + 1)
+    seen, out = set(), []
+    for i in ids:
+        if i not in seen:
+            seen.add(i)
+            out.append(i)
+    return out
+
+
 def extract_provider(src):
     """Return (provider_dict, models_ids) or None."""
     for m in re.finditer(r"export const \w+Provider: RegistryEntry = \{", src):
@@ -164,7 +210,15 @@ def extract_provider(src):
                 models_block = rest[:j+1]
             else:
                 # direct identifier reference: models: SOME_CONST or models: MAP.KEY
-                idm = re.match(r"([A-Za-z_]\w*(?:\.\w+)*)\s*,?\s*$", rest.split("\n")[0])
+                first_line = rest.split("\n")[0]
+                # MAP["key"] bracket form: CHAT_OPENAI_COMPAT_MODELS["meta-llama"]
+                mmap = re.match(r'([A-Za-z_]\w*)\["([\w-]+)"\]\s*,?\s*$', first_line)
+                if mmap:
+                    key = f"{mmap.group(1)}.{mmap.group(2)}"
+                    for mid in shared_model_lists.get(key, []):
+                        if not any(m["id"] == mid for m in models):
+                            models.append({"id": mid, "name": mid})
+                idm = re.match(r"([A-Za-z_]\w*(?:\.\w+)*)\s*,?\s*$", first_line)
                 if idm:
                     ident = idm.group(1)
                     if "." in ident:
@@ -173,7 +227,15 @@ def extract_provider(src):
                             if not any(m["id"] == mid for m in models):
                                 models.append({"id": mid, "name": mid})
                     else:
-                        # plain const — search same-file, siblings, then shared.ts
+                        # plain const — search same-file, siblings, shared.ts,
+                        # then a GLOBAL index of every registry file (cross-dir
+                        # refs like moonshot's MOONSHOT_KIMI_MODELS used by kimi)
+                        for mid in expand_const(ident):
+                            if not any(m["id"] == mid for m in models):
+                                models.append({"id": mid, "name": mid})
+                        for mid in shared_model_lists.get(ident, []):
+                            if not any(m["id"] == mid for m in models):
+                                models.append({"id": mid, "name": mid})
                         candidates = [src] + dir_srcs + [shared_src]
                         for src2 in candidates:
                             cm = re.search(rf"(?:const|export const) {ident}[^=]*=\s*([\[{{])", src2)
@@ -212,10 +274,21 @@ def extract_provider(src):
                     if not any(m["id"] == mm2.group(1) for m in models):
                         models.append({"id": mm2.group(1), "name": mm2.group(1)})
 
-                # referenced consts: CHAT_OPENAI_COMPAT_MODELS.deepinfra / ...spread
-                for ref in re.finditer(r"(?:CHAT_OPENAI_COMPAT_MODELS\.(\w+)|\.\.\.(\w+))", models_block):
-                    key = f"CHAT_OPENAI_COMPAT_MODELS.{ref.group(1)}" if ref.group(1) else ref.group(2)
-                    for mid in shared_model_lists.get(key, []):
+                # referenced consts: CHAT_OPENAI_COMPAT_MODELS.deepinfra /
+                # CHAT_OPENAI_COMPAT_MODELS["meta-llama"] / ...spread
+                for ref in re.finditer(
+                    r"(?:CHAT_OPENAI_COMPAT_MODELS(?:\.(\w+)|\[\"(\w+)\"\]?)|\.\.\.(\w+))",
+                    models_block,
+                ):
+                    key = (
+                        f"CHAT_OPENAI_COMPAT_MODELS.{ref.group(1) or ref.group(2)}"
+                        if (ref.group(1) or ref.group(2))
+                        else ref.group(3)
+                    )
+                    ids = shared_model_lists.get(key, [])
+                    if not ids and "." not in key:
+                        ids = expand_const(key)
+                    for mid in ids:
                         if not any(m["id"] == mid for m in models):
                             models.append({"id": mid, "name": mid})
 
