@@ -1,7 +1,8 @@
-use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
+use axum::{Json, Router, extract::State, http::StatusCode, response::IntoResponse, routing::get};
+use futures::StreamExt;
 use tower_http::cors::CorsLayer;
 
-use crate::chat::{ChatRequest, ChatResponse};
+use crate::chat::ChatRequest;
 use crate::combo::ComboEngine;
 use crate::ratelimit::with_rate_limit;
 use crate::router::{RouterConfig, RoutingEngine};
@@ -39,38 +40,74 @@ async fn handle_health(State(state): State<AppState>) -> Json<serde_json::Value>
     }))
 }
 
-/// Chat completion handler — routes via combo engine with fallback
+/// Chat completion handler — routes via combo engine with fallback.
+/// Honors `stream: true` by returning an SSE response.
 async fn handle_chat(
     State(mut state): State<AppState>,
     Json(req): Json<ChatRequest>,
-) -> Result<Json<ChatResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<axum::response::Response, (StatusCode, Json<serde_json::Value>)> {
+    if req.is_streaming() {
+        return handle_chat_stream(state, req).await;
+    }
+
     match state.combo.execute(&req).await {
         Ok(result) => {
             let mut resp = result.response;
             resp.model = result.used_model;
-            Ok(Json(resp))
+            Ok(axum::Json(resp).into_response())
         }
-        Err(e) => {
-            let status = StatusCode::BAD_GATEWAY;
-            let last = e.attempts.last();
-            let provider = last.and_then(|a| a.provider.clone()).unwrap_or_default();
-            Err((
-                status,
-                Json(serde_json::json!({
-                    "error": {
-                        "message": e.to_string(),
-                        "type": "upstream_error",
-                        "provider": provider,
-                        "attempts": e.attempts.iter().map(|a| serde_json::json!({
-                            "model": a.model,
-                            "provider": a.provider,
-                            "error": a.error,
-                        })).collect::<Vec<_>>(),
-                    }
-                })),
-            ))
-        }
+        Err(e) => Err(combo_error_response(e)),
     }
+}
+
+/// SSE streaming chat handler
+async fn handle_chat_stream(
+    mut state: AppState,
+    req: ChatRequest,
+) -> Result<axum::response::Response, (StatusCode, Json<serde_json::Value>)> {
+    let attempt = match state.combo.execute_stream(&req).await {
+        Ok(a) => a,
+        Err(e) => return Err(combo_error_response(e)),
+    };
+
+    // Map normalized chunks → SSE events, terminate with [DONE]
+    let stream = attempt.stream.filter_map(|chunk| {
+        let data = match chunk {
+            Ok(crate::executor::streaming::StreamChunk::Data(d)) => d,
+            Ok(crate::executor::streaming::StreamChunk::Done) => "[DONE]".to_string(),
+            Err(e) => format!("[ERROR] {}", e),
+        };
+        futures::future::ready(Some(Ok::<_, std::convert::Infallible>(
+            axum::response::sse::Event::default().data(data),
+        )))
+    });
+
+    Ok(axum::response::sse::Sse::new(stream)
+        .keep_alive(
+            axum::response::sse::KeepAlive::new().interval(std::time::Duration::from_secs(15)),
+        )
+        .into_response())
+}
+
+/// Build an OpenAI-style error response from a combo failure
+fn combo_error_response(e: crate::combo::ComboError) -> (StatusCode, Json<serde_json::Value>) {
+    let last = e.attempts.last();
+    let provider = last.and_then(|a| a.provider.clone()).unwrap_or_default();
+    (
+        StatusCode::BAD_GATEWAY,
+        Json(serde_json::json!({
+            "error": {
+                "message": e.to_string(),
+                "type": "upstream_error",
+                "provider": provider,
+                "attempts": e.attempts.iter().map(|a| serde_json::json!({
+                    "model": a.model,
+                    "provider": a.provider,
+                    "error": a.error,
+                })).collect::<Vec<_>>(),
+            }
+        })),
+    )
 }
 
 /// List available models

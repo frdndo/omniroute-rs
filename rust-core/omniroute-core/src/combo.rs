@@ -40,6 +40,14 @@ pub struct ComboResult {
     pub attempts: Vec<AttemptRecord>,
 }
 
+/// A committed streaming attempt (provider + normalized chunk stream)
+pub struct StreamAttempt {
+    pub provider_id: String,
+    pub account_key: String,
+    pub model: String,
+    pub stream: crate::executor::streaming::ChunkStream,
+}
+
 /// Error when all fallback options fail
 #[derive(Debug)]
 pub struct ComboError {
@@ -187,6 +195,67 @@ impl ComboEngine {
         Err(ComboError {
             attempts,
             last_error: ExecutorError::Network("all fallback options exhausted".into()),
+        })
+    }
+
+    /// Stream a chat completion with fallback across candidates.
+    /// Unlike non-streaming, once a stream is established from an upstream
+    /// we commit to it (no mid-stream switching).
+    pub async fn execute_stream(&mut self, req: &ChatRequest) -> Result<StreamAttempt, ComboError> {
+        let candidates = self.candidates(&req.model);
+        let mut attempts: Vec<AttemptRecord> = Vec::new();
+
+        for (i, model) in candidates.iter().enumerate() {
+            if i >= self.max_attempts {
+                break;
+            }
+
+            let target = match self.router.route(model) {
+                Ok(t) => t,
+                Err(e) => {
+                    attempts.push(AttemptRecord {
+                        model: model.clone(),
+                        provider: None,
+                        error: e.to_string(),
+                    });
+                    continue;
+                }
+            };
+
+            let mut attempt_req = req.clone();
+            attempt_req.model = model.clone();
+
+            match target.executor.execute_chat_stream(&attempt_req).await {
+                Ok(stream) => {
+                    return Ok(StreamAttempt {
+                        provider_id: target.provider_id.clone(),
+                        account_key: target.account_key.clone(),
+                        model: model.clone(),
+                        stream,
+                    });
+                }
+                Err(e) => {
+                    let outcome = match &e {
+                        ExecutorError::RateLimited(_) => {
+                            crate::account::AccountOutcome::RateLimited
+                        }
+                        ExecutorError::AuthFailed(_) => crate::account::AccountOutcome::AuthFailed,
+                        _ => crate::account::AccountOutcome::RateLimited,
+                    };
+                    self.router
+                        .report(&target.provider_id, &target.account_key, outcome);
+                    attempts.push(AttemptRecord {
+                        model: model.clone(),
+                        provider: Some(target.provider_id.clone()),
+                        error: e.to_string(),
+                    });
+                }
+            }
+        }
+
+        Err(ComboError {
+            attempts,
+            last_error: ExecutorError::Network("all streaming fallback options exhausted".into()),
         })
     }
 

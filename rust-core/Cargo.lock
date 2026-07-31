@@ -1000,8 +1000,10 @@ name = "omniroute-core"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "bytes",
  "chrono",
  "config",
+ "futures",
  "napi",
  "napi-derive",
  "omniroute-db",

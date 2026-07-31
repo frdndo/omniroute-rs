@@ -1,5 +1,6 @@
 pub mod request_builder;
 pub mod response_parser;
+pub mod streaming;
 
 use crate::chat::{ChatRequest, ChatResponse};
 use reqwest::StatusCode;
