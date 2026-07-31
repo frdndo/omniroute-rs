@@ -108,7 +108,9 @@ impl ComboEngine {
 
     /// Attach the shared DB handle (session affinity + scoring persistence).
     pub fn with_db(mut self, db: std::sync::Arc<omniroute_db::Database>) -> Self {
-        self.db = Some(db);
+        self.db = Some(db.clone());
+        // Load persisted scorer stats (EMA latency, failure counts)
+        self.scorer = std::mem::take(&mut self.scorer).with_db(db);
         self
     }
 

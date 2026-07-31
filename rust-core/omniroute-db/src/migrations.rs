@@ -78,5 +78,18 @@ pub fn run_migrations(conn: &Connection) -> Result<(), anyhow::Error> {
         ",
     )?;
 
+    // Migration v4: per-provider runtime stats for the auto-combo scorer
+    // (survive restarts so scoring doesn't relearn from zero)
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS provider_stats (
+            provider TEXT PRIMARY KEY,
+            latency_ema_ms REAL NOT NULL DEFAULT 0,
+            total_requests INTEGER NOT NULL DEFAULT 0,
+            failed_requests INTEGER NOT NULL DEFAULT 0
+        );
+        ",
+    )?;
+
     Ok(())
 }

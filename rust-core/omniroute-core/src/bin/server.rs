@@ -7,7 +7,10 @@ async fn main() {
         .ok()
         .and_then(|p| p.parse::<u16>().ok())
         .unwrap_or(20128);
-    let version = env!("CARGO_PKG_VERSION");
+    let version = std::env::var("OMNIROUTE_VERSION")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
     tracing::info!("🚀 omniroute-rs proxy v{} starting on :{}", version, port);
-    proxy::start_server(port, version).await;
+    proxy::start_server(port, &version).await;
 }

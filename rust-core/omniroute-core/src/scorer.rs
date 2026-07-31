@@ -15,11 +15,15 @@ pub struct ProviderStats {
 
 /// Scores candidate models so the combo engine tries the best option first.
 /// Mirrors OmniRoute's autoCombo scoring (health, latency, concurrency).
-#[derive(Debug, Default, Clone)]
+/// Stats persist to SQLite (`provider_stats` table) so scoring survives
+/// restarts instead of relearning from zero.
+#[derive(Default, Clone)]
 pub struct ComboScorer {
     stats: HashMap<String, ProviderStats>,
     /// EMA smoothing factor (0.0-1.0); higher = reacts faster
     pub alpha: f64,
+    /// Optional shared DB handle — persists stats on change
+    pub db: Option<std::sync::Arc<omniroute_db::Database>>,
 }
 
 impl ComboScorer {
@@ -27,6 +31,51 @@ impl ComboScorer {
         Self {
             stats: HashMap::new(),
             alpha: 0.3,
+            db: None,
+        }
+    }
+
+    /// Attach a DB handle and load persisted stats.
+    pub fn with_db(mut self, db: std::sync::Arc<omniroute_db::Database>) -> Self {
+        self.db = Some(db);
+        self.load_from_db();
+        self
+    }
+
+    /// Load per-provider stats from SQLite into memory.
+    fn load_from_db(&mut self) {
+        let Some(db) = &self.db else { return };
+        let Ok(conn) = db.conn.lock() else { return };
+        let Ok(rows) = omniroute_db::repos::provider_stats_repo::get_all(&conn) else {
+            return;
+        };
+        for r in rows {
+            self.stats.insert(
+                r.provider,
+                ProviderStats {
+                    latency_ema_ms: r.latency_ema_ms,
+                    total_requests: r.total_requests,
+                    failed_requests: r.failed_requests,
+                    active_requests: 0,
+                },
+            );
+        }
+    }
+
+    /// Write-through persistence after a stat change.
+    fn persist(&self, provider: &str) {
+        let Some(db) = &self.db else { return };
+        let Some(s) = self.stats.get(provider) else {
+            return;
+        };
+        if let Ok(conn) = db.conn.lock() {
+            let _ = omniroute_db::repos::provider_stats_repo::upsert(
+                &conn,
+                provider,
+                s.latency_ema_ms,
+                s.total_requests,
+                s.failed_requests,
+            );
         }
     }
 
@@ -43,6 +92,7 @@ impl ComboScorer {
         } else {
             s.latency_ema_ms = self.alpha * latency_ms + (1.0 - self.alpha) * s.latency_ema_ms;
         }
+        self.persist(provider);
     }
 
     pub fn record_failure(&mut self, provider: &str) {
@@ -50,6 +100,7 @@ impl ComboScorer {
             .entry(provider.to_string())
             .or_default()
             .failed_requests += 1;
+        self.persist(provider);
     }
 
     pub fn begin_request(&mut self, provider: &str) {

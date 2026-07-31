@@ -38,3 +38,16 @@ pub fn delete(conn: &Connection, id: &str) -> Result<()> {
     conn.execute("DELETE FROM apiKeys WHERE id=?1", params![id])?;
     Ok(())
 }
+
+pub fn update(
+    conn: &Connection,
+    id: &str,
+    name: Option<&str>,
+    is_active: Option<bool>,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE apiKeys SET name=COALESCE(?2, name), is_active=COALESCE(?3, is_active) WHERE id=?1",
+        params![id, name, is_active],
+    )?;
+    Ok(())
+}

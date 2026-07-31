@@ -271,6 +271,25 @@ pub async fn delete_api_key(
     Ok(Json(json!({ "ok": true, "id": id })))
 }
 
+pub async fn update_api_key(
+    State(state): State<crate::proxy::AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let name = body.get("name").and_then(|v| v.as_str());
+    let is_active = body.get("is_active").and_then(|v| v.as_bool());
+    if name.is_none() && is_active.is_none() {
+        return Err((StatusCode::BAD_REQUEST, "name or is_active required".into()));
+    }
+    with_db(&state, |c| {
+        api_key_repo::update(c, &id, name, is_active).map_err(|e| e.to_string())
+    })
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    // is_active change affects gateway auth immediately
+    state.reload_accounts();
+    Ok(Json(json!({ "ok": true, "id": id })))
+}
+
 // ── Combo management (fallback chains) ───────────────────────────────
 
 pub async fn list_combos(
@@ -346,6 +365,7 @@ pub fn admin_router(state: crate::proxy::AppState) -> Router {
         .route("/providers/{id}", delete(delete_provider_connection))
         .route("/api-keys", get(list_api_keys))
         .route("/api-keys", post(create_api_key))
+        .route("/api-keys/{id}", put(update_api_key))
         .route("/api-keys/{id}", delete(delete_api_key))
         .route("/combos", get(list_combos))
         .route("/combos", post(create_combo))
