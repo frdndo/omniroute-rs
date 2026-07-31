@@ -370,6 +370,7 @@ pub fn admin_router(state: crate::proxy::AppState) -> Router {
         .route("/combos", get(list_combos))
         .route("/combos", post(create_combo))
         .route("/combos/{id}", delete(delete_combo))
+        .route("/logs", get(crate::logs::handle_logs))
         .with_state(state)
 }
 

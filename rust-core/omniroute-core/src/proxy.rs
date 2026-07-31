@@ -293,22 +293,32 @@ pub fn build_router(state: AppState) -> Router {
             .make_span_with(|request: &axum::extract::Request| {
                 let method = request.method().to_string();
                 let uri = request.uri().path().to_string();
-                tracing::info_span!(
+                let span = tracing::info_span!(
                     "request",
                     method = %method,
                     uri = %uri,
                     status = tracing::field::Empty,
                     duration_ms = tracing::field::Empty
-                )
+                );
+                // Stage the entry for the dashboard log buffer
+                if let Some(id) = span.id() {
+                    crate::logs::stage_request(id.into_u64(), &method, &uri);
+                }
+                span
             })
             .on_response(|response: &axum::http::Response<axum::body::Body>, latency: std::time::Duration, span: &tracing::Span| {
-                span.record("status", response.status().as_u16());
-                span.record("duration_ms", latency.as_millis() as u64);
+                let status = response.status().as_u16();
+                let duration_ms = latency.as_millis() as u64;
+                span.record("status", status);
+                span.record("duration_ms", duration_ms);
+                if let Some(id) = span.id() {
+                    crate::logs::finalize_request(id.into_u64(), status, duration_ms);
+                }
                 tracing::info!(
                     parent: span,
                     "→ {} ({} ms)",
-                    response.status().as_u16(),
-                    latency.as_millis()
+                    status,
+                    duration_ms
                 );
             })
             .on_failure(|_error, latency: std::time::Duration, span: &tracing::Span| {

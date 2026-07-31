@@ -5,6 +5,7 @@ pub mod chat;
 pub mod combo;
 pub mod config;
 pub mod executor;
+pub mod logs;
 pub mod proxy;
 pub mod ratelimit;
 pub mod router;
