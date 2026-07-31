@@ -2,6 +2,7 @@ use axum::{Json, Router, extract::State, http::StatusCode, response::IntoRespons
 use futures::StreamExt;
 use tower_http::cors::CorsLayer;
 
+use crate::auth::{AllowedHosts, GatewayKeys};
 use crate::chat::ChatRequest;
 use crate::combo::ComboEngine;
 use crate::ratelimit::with_rate_limit;
@@ -13,6 +14,8 @@ pub struct AppState {
     pub started_at: chrono::DateTime<chrono::Utc>,
     pub version: String,
     pub combo: ComboEngine,
+    pub gateway_keys: GatewayKeys,
+    pub allowed_hosts: AllowedHosts,
 }
 
 impl AppState {
@@ -21,11 +24,23 @@ impl AppState {
             started_at: chrono::Utc::now(),
             version: version.to_string(),
             combo: ComboEngine::new(RoutingEngine::new(RouterConfig::default())),
+            gateway_keys: GatewayKeys::default(),
+            allowed_hosts: AllowedHosts::default(),
         }
     }
 
     pub fn with_router(mut self, config: RouterConfig) -> Self {
         self.combo = ComboEngine::new(RoutingEngine::new(config));
+        self
+    }
+
+    pub fn with_gateway_keys(mut self, keys: Vec<String>) -> Self {
+        self.gateway_keys = GatewayKeys::new(keys);
+        self
+    }
+
+    pub fn with_allowed_hosts(mut self, hosts: Vec<String>) -> Self {
+        self.allowed_hosts = AllowedHosts::new(hosts);
         self
     }
 }
@@ -131,17 +146,25 @@ async fn handle_models() -> Json<serde_json::Value> {
 
 /// Build the HTTP proxy router
 pub fn build_router(state: AppState) -> Router {
-    Router::new()
+    let base = Router::new()
         .route("/health", get(handle_health))
         .route("/v1/chat/completions", axum::routing::post(handle_chat))
         .route("/v1/models", get(handle_models))
         .layer(CorsLayer::permissive())
-        .with_state(state)
+        .with_state(state.clone());
+
+    crate::auth::harden_router(
+        base,
+        state.gateway_keys.clone(),
+        state.allowed_hosts.clone(),
+    )
 }
 
 /// Start the proxy server on the given port
 pub async fn start_server(port: u16, version: &str) {
-    let state = AppState::new(version);
+    let state = AppState::new(version)
+        .with_gateway_keys(crate::config::gateway_keys_from_env())
+        .with_allowed_hosts(crate::config::allowed_hosts_from_env());
     let app = with_rate_limit(build_router(state));
 
     let addr = format!("0.0.0.0:{}", port);
@@ -268,5 +291,100 @@ mod tests {
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["error"]["type"], "upstream_error");
+    }
+
+    #[tokio::test]
+    async fn test_auth_requires_key() {
+        let state = AppState::new("test").with_gateway_keys(vec!["sk-gateway".into()]);
+        let app = build_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/models")
+                    .method(Method::GET)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_auth_accepts_valid_key() {
+        let state = AppState::new("test").with_gateway_keys(vec!["sk-gateway".into()]);
+        let app = build_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/models")
+                    .method(Method::GET)
+                    .header("Authorization", "Bearer sk-gateway")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_auth_rejects_wrong_key() {
+        let state = AppState::new("test").with_gateway_keys(vec!["sk-gateway".into()]);
+        let app = build_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/models")
+                    .method(Method::GET)
+                    .header("Authorization", "Bearer wrong")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_host_guard_blocks_spoofed_host() {
+        // Only localhost allowed
+        let state = AppState::new("test").with_allowed_hosts(vec!["localhost".into()]);
+        let app = build_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/models")
+                    .method(Method::GET)
+                    .header("Host", "evil.com")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_host_guard_allows_localhost() {
+        let state = AppState::new("test").with_allowed_hosts(vec!["localhost".into()]);
+        let app = build_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/models")
+                    .method(Method::GET)
+                    .header("Host", "localhost:20128")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }

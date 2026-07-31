@@ -1,4 +1,5 @@
 pub mod account;
+pub mod auth;
 pub mod chat;
 pub mod combo;
 pub mod config;
