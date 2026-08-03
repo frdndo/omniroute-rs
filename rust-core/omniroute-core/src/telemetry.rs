@@ -117,14 +117,15 @@ mod tests {
 
     #[test]
     fn test_record_and_stats() {
+        let t = Telemetry::new();
         let db = std::sync::Arc::new(omniroute_db::Database::open_in_memory().expect("temp db"));
-        TELEMETRY.attach(db.clone());
-        TELEMETRY.record("POST", "/v1/chat/completions", 200, 42);
-        TELEMETRY.record("POST", "/v1/chat/completions", 429, 5);
-        TELEMETRY.record("GET", "/health", 200, 1);
-        TELEMETRY.record("POST", "/v1/chat/completions", 500, 100);
+        t.attach(db.clone());
+        t.record("POST", "/v1/chat/completions", 200, 42);
+        t.record("POST", "/v1/chat/completions", 429, 5);
+        t.record("GET", "/health", 200, 1);
+        t.record("POST", "/v1/chat/completions", 500, 100);
 
-        let s = TELEMETRY.stats();
+        let s = t.stats();
         assert_eq!(s["total_requests"], 4);
         assert_eq!(s["by_status"]["2xx"], 2);
         assert_eq!(s["by_status"]["4xx"], 1);
@@ -134,9 +135,13 @@ mod tests {
 
     #[test]
     fn test_stats_empty() {
+        // Local instance: the global TELEMETRY static is shared across
+        // parallel tests and would be polluted by test_record_and_stats.
+        let t = Telemetry::new();
         let db = std::sync::Arc::new(omniroute_db::Database::open_in_memory().expect("temp db"));
-        TELEMETRY.attach(db);
-        let s = TELEMETRY.stats();
+        t.attach(db);
+        let s = t.stats();
         assert_eq!(s["total_requests"], 0);
+        assert_eq!(s["by_status"]["2xx"], 0);
     }
 }
