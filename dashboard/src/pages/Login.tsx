@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { Card, Form, Input, Button, Typography, message, Divider } from "antd";
 import { LockOutlined, KeyOutlined } from "@ant-design/icons";
-import { useNavigate } from "react-router-dom";
-import { setAdminKey, setGatewayKey, getAdminKey } from "../api/client";
+import { useRouter } from "../router";
+import { setAdminKey, setGatewayKey } from "../api/client";
 
 export default function Login() {
   const [loading, setLoading] = useState(false);
-  const navigate = useNavigate();
+  const { navigate } = useRouter();
   const [form] = Form.useForm();
 
   const onFinish = async (v: { admin_key?: string; gateway_key?: string }) => {
@@ -54,11 +54,6 @@ export default function Login() {
             Masuk
           </Button>
         </Form>
-        {getAdminKey() && (
-          <Button style={{ marginTop: 12 }} block onClick={() => navigate("/")}>
-            Lanjut dengan key tersimpan
-          </Button>
-        )}
       </Card>
     </div>
   );
