@@ -291,6 +291,13 @@ pub fn build_router(state: AppState) -> Router {
             "/.well-known/agent-card.json",
             get(crate::a2a::handle_agent_card),
         )
+        .route("/v1/batch", post(crate::batch::handle_batch_submit))
+        .route("/v1/batch/{id}", get(crate::batch::handle_batch_get))
+        .route(
+            "/v1/batch/{id}/cancel",
+            post(crate::batch::handle_batch_cancel),
+        )
+        .route("/v1/relay", post(crate::batch::handle_relay))
         .nest_service("/admin", admin_router_from_state(&state))
         .layer(CorsLayer::permissive())
         .with_state(state.clone());

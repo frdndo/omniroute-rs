@@ -11,6 +11,7 @@ import {
   BarChartOutlined,
   DollarOutlined,
   DatabaseOutlined,
+  PlayCircleOutlined,
 } from "@ant-design/icons";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import Login from "./pages/Login";
@@ -25,6 +26,7 @@ import Webhooks from "./pages/Webhooks";
 import CachePage from "./pages/Cache";
 import McpPage from "./pages/Mcp";
 import A2aPage from "./pages/A2a";
+import BatchPage from "./pages/Batch";
 import Playground from "./pages/Playground";
 import { getAdminKey } from "./api/client";
 
@@ -43,6 +45,7 @@ const MENU = [
   { key: "/cache", icon: <DatabaseOutlined />, label: "Cache" },
   { key: "/mcp", icon: <ApiOutlined />, label: "MCP" },
   { key: "/a2a", icon: <ApiOutlined />, label: "A2A" },
+  { key: "/batch", icon: <PlayCircleOutlined />, label: "Batch" },
   { key: "/playground", icon: <ExperimentOutlined />, label: "Playground" },
 ];
 
@@ -95,6 +98,7 @@ function Shell() {
             <Route path="/cache" element={<CachePage />} />
             <Route path="/mcp" element={<McpPage />} />
             <Route path="/a2a" element={<A2aPage />} />
+            <Route path="/batch" element={<BatchPage />} />
             <Route path="/playground" element={<Playground />} />
           </Routes>
         </Content>
