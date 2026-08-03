@@ -1,6 +1,7 @@
 pub mod account;
 pub mod admin;
 pub mod auth;
+pub mod cache;
 pub mod chat;
 pub mod combo;
 pub mod config;

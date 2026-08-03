@@ -390,6 +390,9 @@ pub fn admin_router(state: crate::proxy::AppState) -> Router {
         .route("/webhooks/{id}", put(update_webhook))
         .route("/webhooks/{id}", delete(delete_webhook))
         .route("/audit", get(list_audit))
+        .route("/cache", get(list_cache))
+        .route("/cache", delete(clear_cache))
+        .route("/cache/{key}", delete(delete_cache_entry))
         .with_state(state)
 }
 
@@ -604,6 +607,63 @@ pub async fn list_audit(
     })
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(Json(json!({ "object": "list", "data": items })))
+}
+
+// ── M5: Cache management ──────────────────────────────────────────────
+
+/// GET /admin/cache — stats + entries.
+pub async fn list_cache(
+    State(state): State<crate::proxy::AppState>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let items = with_db(&state, |c| {
+        // purge expired first so stats are honest
+        let _ = omniroute_db::repos::cache_repo::purge_expired(c);
+        let s = omniroute_db::repos::cache_repo::stats(c).map_err(|e| e.to_string())?;
+        let mut stmt = c
+            .prepare("SELECT key, model, hits, created_at, expires_at FROM cache_entries ORDER BY created_at DESC LIMIT 200")
+            .map_err(|e| e.to_string())?;
+        let entries: Vec<Value> = stmt
+            .query_map([], |row| {
+                Ok(json!({
+                    "key": row.get::<_, String>(0)?,
+                    "model": row.get::<_, String>(1)?,
+                    "hits": row.get::<_, i64>(2)?,
+                    "created_at": row.get::<_, String>(3)?,
+                    "expires_at": row.get::<_, String>(4)?,
+                }))
+            })
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        let mut out = s;
+        out["entries_list"] = json!(entries);
+        Ok(out)
+    })
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(items))
+}
+
+/// DELETE /admin/cache — flush all entries.
+pub async fn clear_cache(
+    State(state): State<crate::proxy::AppState>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    with_db(&state, |c| {
+        omniroute_db::repos::cache_repo::clear(c).map_err(|e| e.to_string())
+    })
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// DELETE /admin/cache/{key} — remove one entry.
+pub async fn delete_cache_entry(
+    State(state): State<crate::proxy::AppState>,
+    Path(key): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    with_db(&state, |c| {
+        omniroute_db::repos::cache_repo::delete(c, &key).map_err(|e| e.to_string())
+    })
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(json!({ "ok": true, "key": key })))
 }
 
 /// Build admin routes with auth applied, to be nested under /admin.

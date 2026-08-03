@@ -172,5 +172,20 @@ pub fn run_migrations(conn: &Connection) -> Result<(), anyhow::Error> {
         ",
     )?;
 
+    // Migration v8: response cache (M5)
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS cache_entries (
+            key TEXT PRIMARY KEY,
+            model TEXT NOT NULL,
+            response TEXT NOT NULL,
+            hits INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            expires_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_cache_expires ON cache_entries(expires_at);
+        ",
+    )?;
+
     Ok(())
 }

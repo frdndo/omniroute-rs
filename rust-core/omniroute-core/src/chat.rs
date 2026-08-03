@@ -23,6 +23,12 @@ pub struct ChatRequest {
     pub tool_choice: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none", flatten)]
     pub extra: Option<HashMap<String, serde_json::Value>>,
+    /// M5: cache this request/response (default false).
+    #[serde(default)]
+    pub cache: bool,
+    /// M5: cache TTL seconds (default 300).
+    #[serde(default)]
+    pub cache_ttl: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

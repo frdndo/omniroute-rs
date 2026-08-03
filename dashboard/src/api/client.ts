@@ -108,6 +108,11 @@ export const api = {
     remove: (id: string) => req<{ ok: boolean }>(`/admin/webhooks/${id}`, { method: "DELETE" }),
   },
   audit: () => req<{ data: any[] }>("/admin/audit"),
+  cache: {
+    list: () => req<any>("/admin/cache"),
+    clear: () => req<{ ok: boolean }>("/admin/cache", { method: "DELETE" }),
+    remove: (key: string) => req<{ ok: boolean }>(`/admin/cache/${key}`, { method: "DELETE" }),
+  },
   chat: (body: any, key?: string) => {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     const k = key || getGatewayKey();

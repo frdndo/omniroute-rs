@@ -292,6 +292,8 @@ mod tests {
             tools: None,
             tool_choice: None,
             extra: None,
+            cache: false,
+            cache_ttl: None,
         }
     }
 

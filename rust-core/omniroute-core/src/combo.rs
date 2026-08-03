@@ -162,7 +162,8 @@ impl ComboEngine {
     /// 4. Candidates are then score-ordered (G5 auto-combo)
     ///
     /// `session_id` (optional) enables G3 session affinity: the account used
-    /// for a session is preferred on subsequent turns.
+    /// for a session is preferred on subsequent turns. M5: cache-aware.
+    #[allow(clippy::collapsible_if)]
     pub async fn execute(
         &mut self,
         req: &ChatRequest,
@@ -172,6 +173,24 @@ impl ComboEngine {
         candidates = self.score_order(candidates);
         let mut attempts: Vec<AttemptRecord> = Vec::new();
         let affinity = self.affinity_for(session_id);
+
+        // M5: cache lookup before any upstream call
+        if req.cache {
+            if let Some(db) = &self.db {
+                let key = crate::cache::Cache::key(req);
+                if let Some(cached) = crate::cache::Cache::get(db, &key) {
+                    if let Ok(resp) = serde_json::from_str::<ChatResponse>(&cached) {
+                        tracing::info!("cache HIT {} ({})", key, req.model);
+                        return Ok(ComboResult {
+                            response: resp,
+                            used_model: req.model.clone(),
+                            used_provider: "cache".to_string(),
+                            attempts: Vec::new(),
+                        });
+                    }
+                }
+            }
+        }
 
         for (i, model) in candidates.iter().enumerate() {
             if i >= self.max_attempts {
@@ -238,6 +257,15 @@ impl ComboEngine {
                     // G3: remember this account for the session
                     if let Some(sid) = session_id {
                         self.record_affinity(sid, &target.provider_id, &target.account_key);
+                    }
+                    // M5: cache the successful response
+                    if req.cache {
+                        if let Some(db) = &self.db {
+                            let key = crate::cache::Cache::key(req);
+                            let ttl = req.cache_ttl.unwrap_or(300);
+                            let json = serde_json::to_string(&resp).unwrap_or_default();
+                            crate::cache::Cache::set(db, &key, &req.model, &json, ttl);
+                        }
                     }
                     // M4: webhook event on successful chat
                     if let Some(db) = &self.db {
@@ -522,6 +550,8 @@ mod tests {
             tools: None,
             tool_choice: None,
             extra: None,
+            cache: false,
+            cache_ttl: None,
         }
     }
 

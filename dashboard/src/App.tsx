@@ -10,6 +10,7 @@ import {
   LoginOutlined,
   BarChartOutlined,
   DollarOutlined,
+  DatabaseOutlined,
 } from "@ant-design/icons";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import Login from "./pages/Login";
@@ -21,6 +22,7 @@ import Logs from "./pages/Logs";
 import Analytics from "./pages/Analytics";
 import Costs from "./pages/Costs";
 import Webhooks from "./pages/Webhooks";
+import CachePage from "./pages/Cache";
 import Playground from "./pages/Playground";
 import { getAdminKey } from "./api/client";
 
@@ -36,6 +38,7 @@ const MENU = [
   { key: "/analytics", icon: <BarChartOutlined />, label: "Analytics" },
   { key: "/costs", icon: <DollarOutlined />, label: "Costs" },
   { key: "/webhooks", icon: <ApiOutlined />, label: "Webhooks" },
+  { key: "/cache", icon: <DatabaseOutlined />, label: "Cache" },
   { key: "/playground", icon: <ExperimentOutlined />, label: "Playground" },
 ];
 
@@ -85,6 +88,7 @@ function Shell() {
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/costs" element={<Costs />} />
             <Route path="/webhooks" element={<Webhooks />} />
+            <Route path="/cache" element={<CachePage />} />
             <Route path="/playground" element={<Playground />} />
           </Routes>
         </Content>
