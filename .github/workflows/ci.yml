@@ -9,14 +9,15 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
+            ~/.cargo/bin
             rust-core/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('rust-core/Cargo.lock') }}
 
@@ -36,18 +37,21 @@ jobs:
         run: cargo test
         working-directory: rust-core
 
+      # cargo-audit run directly — the rustsec/audit-check action still uses
+      # deprecated Node 20. ~/.cargo/bin is cached so install is a no-op on
+      # cache hits.
       - name: Audit
-        uses: rustsec/audit-check@v2.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          working-directory: rust-core
+        run: |
+          command -v cargo-audit || cargo install cargo-audit --locked
+          cargo audit
+        working-directory: rust-core
 
   napi-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
 
@@ -60,7 +64,7 @@ jobs:
         working-directory: rust-core/omniroute-core
 
       - name: Upload N-API artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: omniroute-core-node
           path: rust-core/omniroute-core/*.node
