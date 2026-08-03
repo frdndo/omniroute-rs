@@ -8,6 +8,7 @@ import {
   FileTextOutlined,
   ExperimentOutlined,
   LoginOutlined,
+  BarChartOutlined,
 } from "@ant-design/icons";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import Login from "./pages/Login";
@@ -16,6 +17,7 @@ import Providers from "./pages/Providers";
 import ApiKeys from "./pages/ApiKeys";
 import Combos from "./pages/Combos";
 import Logs from "./pages/Logs";
+import Analytics from "./pages/Analytics";
 import Playground from "./pages/Playground";
 import { getAdminKey } from "./api/client";
 
@@ -28,6 +30,7 @@ const MENU = [
   { key: "/api-keys", icon: <KeyOutlined />, label: "API Keys" },
   { key: "/combos", icon: <LinkOutlined />, label: "Combos" },
   { key: "/logs", icon: <FileTextOutlined />, label: "Logs" },
+  { key: "/analytics", icon: <BarChartOutlined />, label: "Analytics" },
   { key: "/playground", icon: <ExperimentOutlined />, label: "Playground" },
 ];
 
@@ -74,6 +77,7 @@ function Shell() {
             <Route path="/api-keys" element={<ApiKeys />} />
             <Route path="/combos" element={<Combos />} />
             <Route path="/logs" element={<Logs />} />
+            <Route path="/analytics" element={<Analytics />} />
             <Route path="/playground" element={<Playground />} />
           </Routes>
         </Content>

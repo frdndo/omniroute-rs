@@ -91,5 +91,22 @@ pub fn run_migrations(conn: &Connection) -> Result<(), anyhow::Error> {
         ",
     )?;
 
+    // Migration v5: persistent request telemetry (analytics foundation)
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS request_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            method TEXT NOT NULL,
+            uri TEXT NOT NULL,
+            status INTEGER NOT NULL,
+            duration_ms INTEGER NOT NULL,
+            provider TEXT,
+            model TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_request_logs_ts ON request_logs(ts);
+        ",
+    )?;
+
     Ok(())
 }

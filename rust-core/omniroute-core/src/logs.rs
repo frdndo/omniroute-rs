@@ -78,6 +78,14 @@ pub fn stage_request(span_id: u64, method: &str, uri: &str) {
     }
 }
 
+/// Peek a staged entry (method/uri) without consuming it.
+pub fn peek_request(span_id: u64) -> Option<LogEntry> {
+    PENDING_LOGS
+        .lock()
+        .ok()
+        .and_then(|m| m.get(&span_id).cloned())
+}
+
 /// Finalize a staged entry with status/duration and push to the buffer.
 pub fn finalize_request(span_id: u64, status: u16, duration_ms: u64) {
     let entry = PENDING_LOGS

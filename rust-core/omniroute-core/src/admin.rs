@@ -371,7 +371,13 @@ pub fn admin_router(state: crate::proxy::AppState) -> Router {
         .route("/combos", post(create_combo))
         .route("/combos/{id}", delete(delete_combo))
         .route("/logs", get(crate::logs::handle_logs))
+        .route("/stats", get(handle_stats))
         .with_state(state)
+}
+
+/// GET /admin/stats — telemetry aggregates for the Analytics dashboard.
+pub async fn handle_stats() -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    Ok(Json(crate::telemetry::TELEMETRY.stats()))
 }
 
 /// Build admin routes with auth applied, to be nested under /admin.

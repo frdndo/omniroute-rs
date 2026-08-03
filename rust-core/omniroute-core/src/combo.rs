@@ -216,6 +216,13 @@ impl ComboEngine {
                     self.scorer
                         .record_latency(&target.provider_id, started.elapsed().as_millis() as f64);
                     self.scorer.end_request(&target.provider_id);
+                    // Telemetry (M2): successful chat with provider/model
+                    crate::telemetry::TELEMETRY.record_chat(
+                        &target.provider_id,
+                        model,
+                        200,
+                        started.elapsed().as_millis() as u64,
+                    );
                     self.router.report(
                         &target.provider_id,
                         &target.account_key,
@@ -237,6 +244,22 @@ impl ComboEngine {
                         .record_latency(&target.provider_id, started.elapsed().as_millis() as f64);
                     self.scorer.record_failure(&target.provider_id);
                     self.scorer.end_request(&target.provider_id);
+                    // Telemetry (M2): failed chat attempt
+                    let err_code = match &e {
+                        ExecutorError::RateLimited(_) => 429,
+                        ExecutorError::AuthFailed(_) => 401,
+                        ExecutorError::Upstream(code, _) => *code,
+                        ExecutorError::Network(_) => 502,
+                        ExecutorError::Timeout(_) => 504,
+                        ExecutorError::InvalidResponse(_) => 502,
+                        ExecutorError::UnsupportedProvider(_) => 400,
+                    };
+                    crate::telemetry::TELEMETRY.record_chat(
+                        &target.provider_id,
+                        model,
+                        err_code,
+                        started.elapsed().as_millis() as u64,
+                    );
                     let outcome = match &e {
                         ExecutorError::RateLimited(_) => {
                             crate::account::AccountOutcome::RateLimited

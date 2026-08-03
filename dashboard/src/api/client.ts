@@ -90,6 +90,7 @@ export const api = {
     remove: (id: string) => req<{ ok: boolean }>(`/admin/combos/${id}`, { method: "DELETE" }),
   },
   logs: () => req<{ data: LogEntry[]; uptime_seconds: number }>("/admin/logs"),
+  stats: () => req<any>("/admin/stats"),
   chat: (body: any, key?: string) => {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     const k = key || getGatewayKey();

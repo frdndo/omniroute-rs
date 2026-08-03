@@ -12,6 +12,7 @@ pub mod router;
 pub mod sanitize;
 pub mod scorer;
 pub mod sse;
+pub mod telemetry;
 pub mod translator;
 
 use napi_derive::napi;

@@ -139,7 +139,9 @@ async fn handle_chat(
     }
 
     let mut combo = state.combo.write().await;
-    match combo.execute(&req, session_id.as_deref()).await {
+    // Telemetry context: provider/model diisi setelah route (dari result)
+    let result = combo.execute(&req, session_id.as_deref()).await;
+    match result {
         Ok(result) => {
             let mut resp = crate::sanitize::sanitize_response(result.response);
             resp.model = result.used_model;
@@ -311,8 +313,19 @@ pub fn build_router(state: AppState) -> Router {
                 let duration_ms = latency.as_millis() as u64;
                 span.record("status", status);
                 span.record("duration_ms", duration_ms);
-                if let Some(id) = span.id() {
-                    crate::logs::finalize_request(id.into_u64(), status, duration_ms);
+                #[allow(clippy::redundant_closure)]
+                let span_id = span.id().map(|id| id.into_u64());
+                let (method, uri) = match span_id.and_then(crate::logs::peek_request) {
+                    Some(e) => (e.method, e.uri),
+                    None => ("?".into(), "?".into()),
+                };
+                // Persistent telemetry (M2): chat requests are recorded by the
+                // combo engine (has provider/model); everything else here.
+                if !uri.starts_with("/v1/chat/completions") {
+                    crate::telemetry::TELEMETRY.record(&method, &uri, status, duration_ms);
+                }
+                if let Some(id) = span_id {
+                    crate::logs::finalize_request(id, status, duration_ms);
                 }
                 tracing::info!(
                     parent: span,
@@ -341,6 +354,8 @@ pub async fn start_server(port: u16, version: &str) {
         Ok(d) => {
             tracing::info!("SQLite ready: {}", db_path);
             let arc = std::sync::Arc::new(d);
+            // Attach telemetry (M2): every request → request_logs table
+            crate::telemetry::TELEMETRY.attach(arc.clone());
             if let Err(e) = config.load_from_db(&arc) {
                 tracing::warn!("failed loading provider connections from DB: {}", e);
             }
