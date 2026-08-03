@@ -12,6 +12,8 @@ import {
   DollarOutlined,
   DatabaseOutlined,
   PlayCircleOutlined,
+  SettingOutlined,
+  ReadOutlined,
 } from "@ant-design/icons";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import Login from "./pages/Login";
@@ -27,6 +29,8 @@ import CachePage from "./pages/Cache";
 import McpPage from "./pages/Mcp";
 import A2aPage from "./pages/A2a";
 import BatchPage from "./pages/Batch";
+import Settings from "./pages/Settings";
+import Docs from "./pages/Docs";
 import Playground from "./pages/Playground";
 import { getAdminKey } from "./api/client";
 
@@ -46,6 +50,8 @@ const MENU = [
   { key: "/mcp", icon: <ApiOutlined />, label: "MCP" },
   { key: "/a2a", icon: <ApiOutlined />, label: "A2A" },
   { key: "/batch", icon: <PlayCircleOutlined />, label: "Batch" },
+  { key: "/settings", icon: <SettingOutlined />, label: "Settings" },
+  { key: "/docs", icon: <ReadOutlined />, label: "Docs" },
   { key: "/playground", icon: <ExperimentOutlined />, label: "Playground" },
 ];
 
@@ -99,6 +105,8 @@ function Shell() {
             <Route path="/mcp" element={<McpPage />} />
             <Route path="/a2a" element={<A2aPage />} />
             <Route path="/batch" element={<BatchPage />} />
+            <Route path="/settings" element={<Settings />} />
+            <Route path="/docs" element={<Docs />} />
             <Route path="/playground" element={<Playground />} />
           </Routes>
         </Content>

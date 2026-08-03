@@ -390,6 +390,7 @@ pub fn admin_router(state: crate::proxy::AppState) -> Router {
         .route("/webhooks/{id}", put(update_webhook))
         .route("/webhooks/{id}", delete(delete_webhook))
         .route("/audit", get(list_audit))
+        .route("/settings", get(handle_settings))
         .route("/cache", get(list_cache))
         .route("/cache", delete(clear_cache))
         .route("/cache/{key}", delete(delete_cache_entry))
@@ -664,6 +665,52 @@ pub async fn delete_cache_entry(
     })
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(Json(json!({ "ok": true, "key": key })))
+}
+
+/// GET /admin/settings — runtime configuration summary (no secrets).
+pub async fn handle_settings(
+    State(state): State<crate::proxy::AppState>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let providers = omniroute_providers::list_providers();
+    let model_count: usize = providers.iter().map(|p| p.models.len()).sum();
+    let mut features = vec![
+        "routing".to_string(),
+        "fallback".to_string(),
+        "auto-combo-scoring".to_string(),
+        "session-affinity".to_string(),
+        "streaming".to_string(),
+        "cache".to_string(),
+        "telemetry".to_string(),
+        "costs".to_string(),
+        "webhooks".to_string(),
+        "audit".to_string(),
+        "mcp".to_string(),
+        "a2a".to_string(),
+        "batch".to_string(),
+        "relay".to_string(),
+        "compression".to_string(),
+    ];
+    if state.db.is_some() {
+        features.push("sqlite".to_string());
+    }
+    Ok(Json(json!({
+        "version": state.version,
+        "started_at": state.started_at.to_rfc3339(),
+        "uptime_seconds": (chrono::Utc::now() - state.started_at).num_seconds(),
+        "port": 20129,
+        "db_path": state.db_path,
+        "db_connected": state.db.is_some(),
+        "providers_registry": providers.len(),
+        "models_registry": model_count,
+        "features": features,
+        "env": {
+            "OMNIROUTE_PORT": "20129 (env)",
+            "OMNIROUTE_DB_PATH": state.db_path,
+            "OMNIROUTE_ADMIN_KEYS": "configured (masked)",
+            "OMNIROUTE_API_KEYS": "configured (masked)",
+            "OMNIROUTE_ALLOWED_HOSTS": "configured",
+        },
+    })))
 }
 
 /// Build admin routes with auth applied, to be nested under /admin.

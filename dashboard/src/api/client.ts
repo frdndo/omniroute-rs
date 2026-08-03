@@ -89,6 +89,7 @@ export const api = {
     create: (body: any) => req<{ id: string }>("/admin/combos", { method: "POST", body: JSON.stringify(body) }),
     remove: (id: string) => req<{ ok: boolean }>(`/admin/combos/${id}`, { method: "DELETE" }),
   },
+  settings: () => req<any>("/admin/settings"),
   logs: () => req<{ data: LogEntry[]; uptime_seconds: number }>("/admin/logs"),
   stats: () => req<any>("/admin/stats"),
   costs: (month: string) => req<any>(`/admin/costs?month=${month}`),
