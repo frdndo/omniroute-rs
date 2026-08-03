@@ -91,6 +91,17 @@ export const api = {
   },
   logs: () => req<{ data: LogEntry[]; uptime_seconds: number }>("/admin/logs"),
   stats: () => req<any>("/admin/stats"),
+  costs: (month: string) => req<any>(`/admin/costs?month=${month}`),
+  pricing: {
+    list: () => req<{ data: any[] }>("/admin/pricing"),
+    upsert: (body: any) => req<{ ok: boolean }>("/admin/pricing", { method: "POST", body: JSON.stringify(body) }),
+    remove: (id: string) => req<{ ok: boolean }>(`/admin/pricing/${id}`, { method: "DELETE" }),
+  },
+  budgets: {
+    list: () => req<{ data: any[] }>("/admin/budgets"),
+    upsert: (body: any) => req<{ ok: boolean }>("/admin/budgets", { method: "POST", body: JSON.stringify(body) }),
+    remove: (id: string) => req<{ ok: boolean }>(`/admin/budgets/${id}`, { method: "DELETE" }),
+  },
   chat: (body: any, key?: string) => {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     const k = key || getGatewayKey();

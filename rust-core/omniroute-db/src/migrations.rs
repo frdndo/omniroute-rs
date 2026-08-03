@@ -108,5 +108,45 @@ pub fn run_migrations(conn: &Connection) -> Result<(), anyhow::Error> {
         ",
     )?;
 
+    // Migration v6: token usage + pricing + monthly budgets (M3 costs)
+    let log_cols: Vec<String> = conn
+        .prepare("PRAGMA table_info(request_logs)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<_, _>>()?;
+    if !log_cols.iter().any(|c| c == "prompt_tokens") {
+        conn.execute(
+            "ALTER TABLE request_logs ADD COLUMN prompt_tokens INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    if !log_cols.iter().any(|c| c == "completion_tokens") {
+        conn.execute(
+            "ALTER TABLE request_logs ADD COLUMN completion_tokens INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS pricing (
+            id TEXT PRIMARY KEY,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            input_per_mtok REAL NOT NULL DEFAULT 0,
+            output_per_mtok REAL NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(provider, model)
+        );
+        CREATE TABLE IF NOT EXISTS budgets (
+            id TEXT PRIMARY KEY,
+            provider TEXT NOT NULL,
+            month TEXT NOT NULL,
+            limit_usd REAL NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(provider, month)
+        );
+        ",
+    )?;
+
     Ok(())
 }

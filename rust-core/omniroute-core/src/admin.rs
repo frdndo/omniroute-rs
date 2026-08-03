@@ -1,6 +1,6 @@
 use axum::{
     Json, Router,
-    extract::{Path, Request, State},
+    extract::{Path, Query, Request, State},
     http::StatusCode,
     middleware::{self, Next},
     response::Response,
@@ -372,12 +372,138 @@ pub fn admin_router(state: crate::proxy::AppState) -> Router {
         .route("/combos/{id}", delete(delete_combo))
         .route("/logs", get(crate::logs::handle_logs))
         .route("/stats", get(handle_stats))
+        .route("/pricing", get(list_pricing))
+        .route("/pricing", post(upsert_pricing))
+        .route("/pricing/{id}", delete(delete_pricing))
+        .route("/budgets", get(list_budgets))
+        .route("/budgets", post(upsert_budget))
+        .route("/budgets/{id}", delete(delete_budget))
+        .route("/costs", get(handle_costs))
         .with_state(state)
 }
 
 /// GET /admin/stats — telemetry aggregates for the Analytics dashboard.
 pub async fn handle_stats() -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     Ok(Json(crate::telemetry::TELEMETRY.stats()))
+}
+
+// ── M3: Pricing & budgets & costs ─────────────────────────────────────
+
+pub async fn list_pricing(
+    State(state): State<crate::proxy::AppState>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let items = with_db(&state, |c| {
+        omniroute_db::repos::pricing_repo::get_all(c).map_err(|e| e.to_string())
+    })
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(json!({ "object": "list", "data": items })))
+}
+
+pub async fn upsert_pricing(
+    State(state): State<crate::proxy::AppState>,
+    Json(body): Json<Value>,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, String)> {
+    let provider = body["provider"].as_str().unwrap_or("").to_string();
+    let model = body["model"].as_str().unwrap_or("*").to_string();
+    if provider.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "provider required".into()));
+    }
+    let item = omniroute_db::repos::pricing_repo::PricingRow {
+        id: body["id"].as_str().unwrap_or("").to_string(),
+        provider,
+        model,
+        input_per_mtok: body["input_per_mtok"].as_f64().unwrap_or(0.0),
+        output_per_mtok: body["output_per_mtok"].as_f64().unwrap_or(0.0),
+    };
+    let id = if item.id.is_empty() {
+        uuid::Uuid::new_v4().to_string()
+    } else {
+        item.id.clone()
+    };
+    let item = omniroute_db::repos::pricing_repo::PricingRow {
+        id: id.clone(),
+        ..item
+    };
+    with_db(&state, |c| {
+        omniroute_db::repos::pricing_repo::upsert(c, &item).map_err(|e| e.to_string())
+    })
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok((StatusCode::CREATED, Json(json!({ "ok": true, "id": id }))))
+}
+
+pub async fn delete_pricing(
+    State(state): State<crate::proxy::AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    with_db(&state, |c| {
+        omniroute_db::repos::pricing_repo::delete(c, &id).map_err(|e| e.to_string())
+    })
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(json!({ "ok": true, "id": id })))
+}
+
+pub async fn list_budgets(
+    State(state): State<crate::proxy::AppState>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let items = with_db(&state, |c| {
+        omniroute_db::repos::pricing_repo::get_budgets(c).map_err(|e| e.to_string())
+    })
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(json!({ "object": "list", "data": items })))
+}
+
+pub async fn upsert_budget(
+    State(state): State<crate::proxy::AppState>,
+    Json(body): Json<Value>,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, String)> {
+    let provider = body["provider"].as_str().unwrap_or("").to_string();
+    let month = body["month"].as_str().unwrap_or("").to_string();
+    if provider.is_empty() || month.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "provider and month required".into(),
+        ));
+    }
+    let item = omniroute_db::repos::pricing_repo::BudgetRow {
+        id: uuid::Uuid::new_v4().to_string(),
+        provider,
+        month,
+        limit_usd: body["limit_usd"].as_f64().unwrap_or(0.0),
+    };
+    with_db(&state, |c| {
+        omniroute_db::repos::pricing_repo::upsert_budget(c, &item).map_err(|e| e.to_string())
+    })
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({ "ok": true, "id": item.id })),
+    ))
+}
+
+pub async fn delete_budget(
+    State(state): State<crate::proxy::AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    with_db(&state, |c| {
+        omniroute_db::repos::pricing_repo::delete_budget(c, &id).map_err(|e| e.to_string())
+    })
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(json!({ "ok": true, "id": id })))
+}
+
+/// GET /admin/costs?month=YYYY-MM — spend + budget report.
+pub async fn handle_costs(
+    State(state): State<crate::proxy::AppState>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let month = query
+        .get("month")
+        .cloned()
+        .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m").to_string());
+    let Some(db) = &state.db else {
+        return Err((StatusCode::SERVICE_UNAVAILABLE, "no database".into()));
+    };
+    Ok(Json(crate::costs::Costs::report(db, &month)))
 }
 
 /// Build admin routes with auth applied, to be nested under /admin.

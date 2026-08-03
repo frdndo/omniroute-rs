@@ -4,6 +4,7 @@ pub mod auth;
 pub mod chat;
 pub mod combo;
 pub mod config;
+pub mod costs;
 pub mod executor;
 pub mod logs;
 pub mod proxy;

@@ -42,12 +42,22 @@ impl Telemetry {
             duration_ms as i64,
             None,
             None,
+            0,
+            0,
         );
     }
 
-    /// Record a chat call with provider/model (called by the combo engine).
-    /// `status`: 200 success, else the mapped error code (429/401/5xx...).
-    pub fn record_chat(&self, provider: &str, model: &str, status: u16, duration_ms: u64) {
+    /// Record a chat call with provider/model + token usage (called by the
+    /// combo engine). `status`: 200 success, else mapped error code.
+    pub fn record_chat(
+        &self,
+        provider: &str,
+        model: &str,
+        status: u16,
+        duration_ms: u64,
+        prompt_tokens: i64,
+        completion_tokens: i64,
+    ) {
         let slot = match self.db.lock() {
             Ok(s) => s,
             Err(_) => return,
@@ -62,6 +72,8 @@ impl Telemetry {
             duration_ms as i64,
             Some(provider),
             Some(model),
+            prompt_tokens,
+            completion_tokens,
         );
     }
 

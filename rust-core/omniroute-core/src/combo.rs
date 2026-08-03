@@ -217,11 +217,18 @@ impl ComboEngine {
                         .record_latency(&target.provider_id, started.elapsed().as_millis() as f64);
                     self.scorer.end_request(&target.provider_id);
                     // Telemetry (M2): successful chat with provider/model
+                    let (pt, ct) = resp
+                        .usage
+                        .as_ref()
+                        .map(|u| (u.prompt_tokens, u.completion_tokens))
+                        .unwrap_or((0, 0));
                     crate::telemetry::TELEMETRY.record_chat(
                         &target.provider_id,
                         model,
                         200,
                         started.elapsed().as_millis() as u64,
+                        pt,
+                        ct,
                     );
                     self.router.report(
                         &target.provider_id,
@@ -259,6 +266,8 @@ impl ComboEngine {
                         model,
                         err_code,
                         started.elapsed().as_millis() as u64,
+                        0,
+                        0,
                     );
                     let outcome = match &e {
                         ExecutorError::RateLimited(_) => {
