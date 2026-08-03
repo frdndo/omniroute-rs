@@ -1,3 +1,4 @@
+pub mod a2a;
 pub mod account;
 pub mod admin;
 pub mod auth;

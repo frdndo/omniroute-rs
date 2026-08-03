@@ -24,6 +24,7 @@ import Costs from "./pages/Costs";
 import Webhooks from "./pages/Webhooks";
 import CachePage from "./pages/Cache";
 import McpPage from "./pages/Mcp";
+import A2aPage from "./pages/A2a";
 import Playground from "./pages/Playground";
 import { getAdminKey } from "./api/client";
 
@@ -41,6 +42,7 @@ const MENU = [
   { key: "/webhooks", icon: <ApiOutlined />, label: "Webhooks" },
   { key: "/cache", icon: <DatabaseOutlined />, label: "Cache" },
   { key: "/mcp", icon: <ApiOutlined />, label: "MCP" },
+  { key: "/a2a", icon: <ApiOutlined />, label: "A2A" },
   { key: "/playground", icon: <ExperimentOutlined />, label: "Playground" },
 ];
 
@@ -92,6 +94,7 @@ function Shell() {
             <Route path="/webhooks" element={<Webhooks />} />
             <Route path="/cache" element={<CachePage />} />
             <Route path="/mcp" element={<McpPage />} />
+            <Route path="/a2a" element={<A2aPage />} />
             <Route path="/playground" element={<Playground />} />
           </Routes>
         </Content>

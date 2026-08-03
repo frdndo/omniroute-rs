@@ -486,7 +486,7 @@ impl ComboEngine {
     }
 
     /// Compute the ordered candidate model list for a request model.
-    fn candidates(&self, model: &str) -> Vec<String> {
+    pub(crate) fn candidates(&self, model: &str) -> Vec<String> {
         // 1. Explicit combo match
         if let Some(combo) = self.combos.get(model) {
             return combo.models.clone();

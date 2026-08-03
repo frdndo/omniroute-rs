@@ -286,6 +286,11 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/chat/completions", axum::routing::post(handle_chat))
         .route("/v1/models", get(handle_models))
         .route("/mcp", post(crate::mcp::handle_mcp))
+        .route("/a2a", post(crate::a2a::handle_a2a))
+        .route(
+            "/.well-known/agent-card.json",
+            get(crate::a2a::handle_agent_card),
+        )
         .nest_service("/admin", admin_router_from_state(&state))
         .layer(CorsLayer::permissive())
         .with_state(state.clone());
