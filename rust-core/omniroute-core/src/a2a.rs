@@ -184,6 +184,8 @@ impl A2a {
                     extra: None,
                     cache: false,
                     cache_ttl: None,
+                    compress: false,
+                    max_context_tokens: None,
                 };
 
                 let mut combo = state.combo.write().await;

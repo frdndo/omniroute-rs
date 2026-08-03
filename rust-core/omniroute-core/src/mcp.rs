@@ -170,8 +170,10 @@ impl Mcp {
                     tools: None,
                     tool_choice: None,
                     extra: None,
-                    cache: args.get("cache").and_then(|v| v.as_bool()).unwrap_or(false),
+                    cache: false,
                     cache_ttl: None,
+                    compress: false,
+                    max_context_tokens: None,
                 };
                 let session_id = args.get("session_id").and_then(|s| s.as_str());
 

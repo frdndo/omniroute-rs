@@ -77,6 +77,8 @@ mod tests {
             extra: None,
             cache: false,
             cache_ttl: None,
+            compress: false,
+            max_context_tokens: None,
         }
     }
 

@@ -29,6 +29,12 @@ pub struct ChatRequest {
     /// M5: cache TTL seconds (default 300).
     #[serde(default)]
     pub cache_ttl: Option<u64>,
+    /// M8: compress oversized context before routing (RTK).
+    #[serde(default)]
+    pub compress: bool,
+    /// M8: token budget for compression (default 32_000).
+    #[serde(default)]
+    pub max_context_tokens: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

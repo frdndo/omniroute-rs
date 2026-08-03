@@ -174,10 +174,33 @@ impl ComboEngine {
         let mut attempts: Vec<AttemptRecord> = Vec::new();
         let affinity = self.affinity_for(session_id);
 
+        // M8: compress oversized context before routing (RTK selection)
+        let req = if req.compress {
+            let budget = req.max_context_tokens.unwrap_or(32_000) as usize;
+            let total = crate::compress::Compress::total_tokens(&req.messages);
+            if total > budget {
+                let (compressed, trimmed) =
+                    crate::compress::Compress::rtk_select(&req.messages, budget, 6);
+                tracing::info!(
+                    "context compressed: {} → {} messages ({} trimmed)",
+                    req.messages.len(),
+                    compressed.len(),
+                    trimmed
+                );
+                let mut r = req.clone();
+                r.messages = compressed;
+                r
+            } else {
+                req.clone()
+            }
+        } else {
+            req.clone()
+        };
+
         // M5: cache lookup before any upstream call
         if req.cache {
             if let Some(db) = &self.db {
-                let key = crate::cache::Cache::key(req);
+                let key = crate::cache::Cache::key(&req);
                 if let Some(cached) = crate::cache::Cache::get(db, &key) {
                     if let Ok(resp) = serde_json::from_str::<ChatResponse>(&cached) {
                         tracing::info!("cache HIT {} ({})", key, req.model);
@@ -261,7 +284,7 @@ impl ComboEngine {
                     // M5: cache the successful response
                     if req.cache {
                         if let Some(db) = &self.db {
-                            let key = crate::cache::Cache::key(req);
+                            let key = crate::cache::Cache::key(&req);
                             let ttl = req.cache_ttl.unwrap_or(300);
                             let json = serde_json::to_string(&resp).unwrap_or_default();
                             crate::cache::Cache::set(db, &key, &req.model, &json, ttl);
@@ -552,6 +575,8 @@ mod tests {
             extra: None,
             cache: false,
             cache_ttl: None,
+            compress: false,
+            max_context_tokens: None,
         }
     }
 

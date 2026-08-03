@@ -5,6 +5,7 @@ pub mod auth;
 pub mod cache;
 pub mod chat;
 pub mod combo;
+pub mod compress;
 pub mod config;
 pub mod costs;
 pub mod events;
