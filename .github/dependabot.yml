@@ -1,0 +1,26 @@
+# Dependabot scope: only packages that CI actually builds.
+# src-tauri is macOS-only (never built on Linux CI) → ignored to avoid
+# noise like the failing glib update.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /rust-core
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: npm
+    directory: /dashboard
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 0
+    # macOS-only shell; updates tracked manually via DESKTOP_BUILD.md
