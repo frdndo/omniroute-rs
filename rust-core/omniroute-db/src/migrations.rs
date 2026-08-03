@@ -148,5 +148,29 @@ pub fn run_migrations(conn: &Connection) -> Result<(), anyhow::Error> {
         ",
     )?;
 
+    // Migration v7: webhooks + audit log (M4)
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS webhooks (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            url TEXT NOT NULL,
+            events TEXT NOT NULL DEFAULT 'chat.success,chat.error',
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL DEFAULT (datetime('now')),
+            action TEXT NOT NULL,
+            resource TEXT NOT NULL,
+            resource_id TEXT,
+            detail TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_logs(ts);
+        ",
+    )?;
+
     Ok(())
 }

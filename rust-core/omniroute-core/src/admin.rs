@@ -157,6 +157,9 @@ pub async fn create_provider_connection(
 
     // Pick up the new connection in routing immediately
     state.reload_accounts();
+    if let Some(db) = &state.db {
+        crate::events::Events::audit(db, "create", "provider", Some(&id), Some(&conn.provider));
+    }
 
     Ok((StatusCode::CREATED, Json(json!({ "id": id }))))
 }
@@ -204,6 +207,9 @@ pub async fn delete_provider_connection(
     })
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     state.reload_accounts();
+    if let Some(db) = &state.db {
+        crate::events::Events::audit(db, "delete", "provider", Some(&id), None);
+    }
     Ok(Json(json!({ "ok": true, "id": id })))
 }
 
@@ -379,6 +385,11 @@ pub fn admin_router(state: crate::proxy::AppState) -> Router {
         .route("/budgets", post(upsert_budget))
         .route("/budgets/{id}", delete(delete_budget))
         .route("/costs", get(handle_costs))
+        .route("/webhooks", get(list_webhooks))
+        .route("/webhooks", post(create_webhook))
+        .route("/webhooks/{id}", put(update_webhook))
+        .route("/webhooks/{id}", delete(delete_webhook))
+        .route("/audit", get(list_audit))
         .with_state(state)
 }
 
@@ -504,6 +515,95 @@ pub async fn handle_costs(
         return Err((StatusCode::SERVICE_UNAVAILABLE, "no database".into()));
     };
     Ok(Json(crate::costs::Costs::report(db, &month)))
+}
+
+// ── M4: Webhooks & audit ──────────────────────────────────────────────
+
+pub async fn list_webhooks(
+    State(state): State<crate::proxy::AppState>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let items = with_db(&state, |c| {
+        omniroute_db::repos::webhook_repo::get_all(c).map_err(|e| e.to_string())
+    })
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(json!({ "object": "list", "data": items })))
+}
+
+pub async fn create_webhook(
+    State(state): State<crate::proxy::AppState>,
+    Json(body): Json<Value>,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, String)> {
+    let name = body["name"].as_str().unwrap_or("").to_string();
+    let url = body["url"].as_str().unwrap_or("").to_string();
+    if name.is_empty() || url.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "name and url required".into()));
+    }
+    let events = body["events"]
+        .as_str()
+        .unwrap_or("chat.success,chat.error")
+        .to_string();
+    let w = omniroute_db::repos::webhook_repo::WebhookRow {
+        id: uuid::Uuid::new_v4().to_string(),
+        name,
+        url,
+        events,
+        is_active: body["is_active"].as_bool().unwrap_or(true),
+    };
+    with_db(&state, |c| {
+        omniroute_db::repos::webhook_repo::insert(c, &w).map_err(|e| e.to_string())
+    })
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    if let Some(db) = &state.db {
+        crate::events::Events::audit(db, "create", "webhook", Some(&w.id), Some(&w.name));
+    }
+    Ok((StatusCode::CREATED, Json(json!({ "id": w.id }))))
+}
+
+pub async fn update_webhook(
+    State(state): State<crate::proxy::AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let name = body["name"].as_str().unwrap_or("").to_string();
+    let url = body["url"].as_str().unwrap_or("").to_string();
+    let events = body["events"].as_str().unwrap_or("").to_string();
+    if name.is_empty() || url.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "name and url required".into()));
+    }
+    let w = omniroute_db::repos::webhook_repo::WebhookRow {
+        id: id.clone(),
+        name,
+        url,
+        events,
+        is_active: body["is_active"].as_bool().unwrap_or(true),
+    };
+    with_db(&state, |c| {
+        omniroute_db::repos::webhook_repo::update(c, &id, &w).map_err(|e| e.to_string())
+    })
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(json!({ "ok": true, "id": id })))
+}
+
+pub async fn delete_webhook(
+    State(state): State<crate::proxy::AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    with_db(&state, |c| {
+        omniroute_db::repos::webhook_repo::delete(c, &id).map_err(|e| e.to_string())
+    })
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(json!({ "ok": true, "id": id })))
+}
+
+pub async fn list_audit(
+    State(state): State<crate::proxy::AppState>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let items = with_db(&state, |c| {
+        let rows = omniroute_db::repos::webhook_repo::audit_recent(c, 200);
+        serde_json::to_value(&rows).map_err(|e| e.to_string())
+    })
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(json!({ "object": "list", "data": items })))
 }
 
 /// Build admin routes with auth applied, to be nested under /admin.

@@ -102,6 +102,12 @@ export const api = {
     upsert: (body: any) => req<{ ok: boolean }>("/admin/budgets", { method: "POST", body: JSON.stringify(body) }),
     remove: (id: string) => req<{ ok: boolean }>(`/admin/budgets/${id}`, { method: "DELETE" }),
   },
+  webhooks: {
+    list: () => req<{ data: any[] }>("/admin/webhooks"),
+    create: (body: any) => req<{ id: string }>("/admin/webhooks", { method: "POST", body: JSON.stringify(body) }),
+    remove: (id: string) => req<{ ok: boolean }>(`/admin/webhooks/${id}`, { method: "DELETE" }),
+  },
+  audit: () => req<{ data: any[] }>("/admin/audit"),
   chat: (body: any, key?: string) => {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     const k = key || getGatewayKey();

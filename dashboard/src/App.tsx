@@ -20,6 +20,7 @@ import Combos from "./pages/Combos";
 import Logs from "./pages/Logs";
 import Analytics from "./pages/Analytics";
 import Costs from "./pages/Costs";
+import Webhooks from "./pages/Webhooks";
 import Playground from "./pages/Playground";
 import { getAdminKey } from "./api/client";
 
@@ -34,6 +35,7 @@ const MENU = [
   { key: "/logs", icon: <FileTextOutlined />, label: "Logs" },
   { key: "/analytics", icon: <BarChartOutlined />, label: "Analytics" },
   { key: "/costs", icon: <DollarOutlined />, label: "Costs" },
+  { key: "/webhooks", icon: <ApiOutlined />, label: "Webhooks" },
   { key: "/playground", icon: <ExperimentOutlined />, label: "Playground" },
 ];
 
@@ -82,6 +84,7 @@ function Shell() {
             <Route path="/logs" element={<Logs />} />
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/costs" element={<Costs />} />
+            <Route path="/webhooks" element={<Webhooks />} />
             <Route path="/playground" element={<Playground />} />
           </Routes>
         </Content>

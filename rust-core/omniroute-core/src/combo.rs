@@ -239,6 +239,21 @@ impl ComboEngine {
                     if let Some(sid) = session_id {
                         self.record_affinity(sid, &target.provider_id, &target.account_key);
                     }
+                    // M4: webhook event on successful chat
+                    if let Some(db) = &self.db {
+                        crate::events::Events::dispatch(
+                            db,
+                            "chat.success",
+                            serde_json::json!({
+                                "provider": target.provider_id,
+                                "model": model,
+                                "status": 200,
+                                "duration_ms": started.elapsed().as_millis() as u64,
+                                "prompt_tokens": pt,
+                                "completion_tokens": ct,
+                            }),
+                        );
+                    }
                     return Ok(ComboResult {
                         response: resp,
                         used_model: model.clone(),
@@ -269,6 +284,19 @@ impl ComboEngine {
                         0,
                         0,
                     );
+                    // M4: webhook event on failed chat
+                    if let Some(db) = &self.db {
+                        crate::events::Events::dispatch(
+                            db,
+                            "chat.error",
+                            serde_json::json!({
+                                "provider": target.provider_id,
+                                "model": model,
+                                "status": err_code,
+                                "error": e.to_string(),
+                            }),
+                        );
+                    }
                     let outcome = match &e {
                         ExecutorError::RateLimited(_) => {
                             crate::account::AccountOutcome::RateLimited
