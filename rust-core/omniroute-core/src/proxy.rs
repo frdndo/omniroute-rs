@@ -1,4 +1,10 @@
-use axum::{Json, Router, extract::State, http::StatusCode, response::IntoResponse, routing::get};
+use axum::{
+    Json, Router,
+    extract::State,
+    http::StatusCode,
+    response::IntoResponse,
+    routing::{get, post},
+};
 use futures::StreamExt;
 use tower_http::cors::CorsLayer;
 
@@ -279,6 +285,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/health", get(handle_health))
         .route("/v1/chat/completions", axum::routing::post(handle_chat))
         .route("/v1/models", get(handle_models))
+        .route("/mcp", post(crate::mcp::handle_mcp))
         .nest_service("/admin", admin_router_from_state(&state))
         .layer(CorsLayer::permissive())
         .with_state(state.clone());

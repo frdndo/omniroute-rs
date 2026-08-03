@@ -9,6 +9,7 @@ pub mod costs;
 pub mod events;
 pub mod executor;
 pub mod logs;
+pub mod mcp;
 pub mod proxy;
 pub mod ratelimit;
 pub mod router;

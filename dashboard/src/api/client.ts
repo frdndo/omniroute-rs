@@ -119,4 +119,14 @@ export const api = {
     if (k) headers["Authorization"] = `Bearer ${k}`;
     return fetch(`${BASE}/v1/chat/completions`, { method: "POST", headers, body: JSON.stringify(body) });
   },
+  mcpCall: (params: any, key?: string) => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const k = key || getGatewayKey();
+    if (k) headers["Authorization"] = `Bearer ${k}`;
+    return fetch(`${BASE}/mcp`, { method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method: "tools/call", params }) }).then(async (r) => {
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j?.error?.message || j?.message || `HTTP ${r.status}`);
+      return j;
+    });
+  },
 };
