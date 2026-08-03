@@ -68,3 +68,35 @@ jobs:
         with:
           name: omniroute-core-node
           path: rust-core/omniroute-core/*.node
+
+  dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Cache npm
+        uses: actions/cache@v6
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('dashboard/package-lock.json') }}
+
+      - name: Install
+        run: npm ci
+        working-directory: dashboard
+
+      # build runs `tsc -b && vite build` — type-check errors fail here.
+      - name: Lint
+        run: npm run lint
+        working-directory: dashboard
+
+      - name: Build (tsc + vite)
+        run: npm run build
+        working-directory: dashboard
+
+      - name: Audit
+        run: npm audit --audit-level=high
+        working-directory: dashboard
