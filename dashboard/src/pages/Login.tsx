@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { Card, Form, Input, Button, Typography, message, Divider } from "antd";
 import { LockOutlined, KeyOutlined } from "@ant-design/icons";
-import { useRouter } from "../router";
+import { useNavigate } from "react-router";
 import { setAdminKey, setGatewayKey } from "../api/client";
 
 export default function Login() {
   const [loading, setLoading] = useState(false);
-  const { navigate } = useRouter();
+  const navigate = useNavigate();
   const [form] = Form.useForm();
 
   const onFinish = async (v: { admin_key?: string; gateway_key?: string }) => {

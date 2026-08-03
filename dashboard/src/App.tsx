@@ -1,3 +1,4 @@
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from "react-router";
 import { Layout, Menu, Typography, ConfigProvider, theme } from "antd";
 import {
   DashboardOutlined,
@@ -6,7 +7,6 @@ import {
   LinkOutlined,
   FileTextOutlined,
   ExperimentOutlined,
-  LoginOutlined,
   BarChartOutlined,
   DollarOutlined,
   DatabaseOutlined,
@@ -15,7 +15,6 @@ import {
   ReadOutlined,
 } from "@ant-design/icons";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { RouterProvider, useRouter } from "./router";
 import Login from "./pages/Login";
 import Status from "./pages/Status";
 import Providers from "./pages/Providers";
@@ -36,25 +35,6 @@ import { getAdminKey } from "./api/client";
 
 const { Sider, Content, Header } = Layout;
 
-const PAGES: Record<string, React.ComponentType> = {
-  "/": Status,
-  "/providers": Providers,
-  "/api-keys": ApiKeys,
-  "/combos": Combos,
-  "/logs": Logs,
-  "/analytics": Analytics,
-  "/costs": Costs,
-  "/webhooks": Webhooks,
-  "/cache": CachePage,
-  "/mcp": McpPage,
-  "/a2a": A2aPage,
-  "/batch": BatchPage,
-  "/settings": Settings,
-  "/docs": Docs,
-  "/playground": Playground,
-  "/login": Login,
-};
-
 const MENU = [
   { key: "/", icon: <DashboardOutlined />, label: "Status" },
   { key: "/providers", icon: <ApiOutlined />, label: "Providers" },
@@ -71,18 +51,16 @@ const MENU = [
   { key: "/settings", icon: <SettingOutlined />, label: "Settings" },
   { key: "/docs", icon: <ReadOutlined />, label: "Docs" },
   { key: "/playground", icon: <ExperimentOutlined />, label: "Playground" },
-  { key: "/login", icon: <LoginOutlined />, label: "Login" },
 ];
 
 function Shell() {
-  const { route, navigate } = useRouter();
+  const location = useLocation();
+  const navigate = useNavigate();
   const authed = !!getAdminKey();
 
-  if (!authed && route !== "/login") {
-    return <Login />;
+  if (!authed) {
+    return <Navigate to="/login" replace />;
   }
-
-  const Page = PAGES[route] || Status;
 
   return (
     <Layout style={{ minHeight: "100vh" }}>
@@ -93,20 +71,38 @@ function Shell() {
         <Menu
           theme="dark"
           mode="inline"
-          selectedKeys={[route]}
+          selectedKeys={[location.pathname]}
           items={MENU}
           onClick={(e) => navigate(e.key)}
         />
       </Sider>
       <Layout>
         <Header style={{ background: "#fff", padding: "0 24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <Typography.Text strong>{route === "/" ? "Dashboard" : route.slice(1).toUpperCase()}</Typography.Text>
+          <Typography.Text strong>{location.pathname === "/" ? "Dashboard" : location.pathname.slice(1).toUpperCase()}</Typography.Text>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {getAdminKey() ? "admin: terhubung" : "belum login"}
+            {authed ? "admin: terhubung" : "belum login"}
           </Typography.Text>
         </Header>
         <Content style={{ margin: 24 }}>
-          <Page />
+          <Routes>
+            <Route path="/" element={<Status />} />
+            <Route path="/providers" element={<Providers />} />
+            <Route path="/api-keys" element={<ApiKeys />} />
+            <Route path="/combos" element={<Combos />} />
+            <Route path="/logs" element={<Logs />} />
+            <Route path="/analytics" element={<Analytics />} />
+            <Route path="/costs" element={<Costs />} />
+            <Route path="/webhooks" element={<Webhooks />} />
+            <Route path="/cache" element={<CachePage />} />
+            <Route path="/mcp" element={<McpPage />} />
+            <Route path="/a2a" element={<A2aPage />} />
+            <Route path="/batch" element={<BatchPage />} />
+            <Route path="/settings" element={<Settings />} />
+            <Route path="/docs" element={<Docs />} />
+            <Route path="/playground" element={<Playground />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
         </Content>
       </Layout>
     </Layout>
@@ -119,9 +115,9 @@ export default function App() {
   return (
     <ConfigProvider theme={{ algorithm: theme.darkAlgorithm }}>
       <QueryClientProvider client={queryClient}>
-        <RouterProvider>
+        <BrowserRouter>
           <Shell />
-        </RouterProvider>
+        </BrowserRouter>
       </QueryClientProvider>
     </ConfigProvider>
   );
