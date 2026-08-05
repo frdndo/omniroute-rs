@@ -44,6 +44,13 @@ brew install node@24
 # (node@24 keg-only di Homebrew? tambahin ke PATH:
 #  echo 'export PATH="/opt/homebrew/opt/node@24/bin:$PATH"' >> ~/.zshrc)
 
+# VERIFIKASI struktur repo (wajib — beforeDevCommand pakai path relatif):
+# dari src-tauri, `../` HARUS berisi dashboard + rust-core:
+cd omniroute-rs && ls
+#   dashboard/  rust-core/  src-tauri/   ← harus begini
+# Kalau dashboard gak ada → clone penuh dulu:
+#   git clone https://github.com/frdndo/omniroute-rs.git
+
 # Tauri CLI (crate-nya tauri-cli; binary-nya cargo-tauri)
 cargo install tauri-cli --locked
 
