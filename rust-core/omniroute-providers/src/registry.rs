@@ -28,10 +28,30 @@ pub struct RegistryModel {
 
 static RAW_JSON: &str = include_str!("../data/providers.json");
 
+/// Model ids that are obviously not real models — scraped error messages /
+/// duplicated display names in the raw catalog (e.g. opencode entries like
+/// "reasoning_content ... must be passed back", "Model X is not supported").
+fn is_junk_model(id: &str) -> bool {
+    if id.chars().any(|c| c.is_whitespace()) {
+        return true;
+    }
+    let l = id.to_lowercase();
+    l.contains("must be passed")
+        || l.contains("not supported")
+        || l.contains("reasoning_content")
+        || l.starts_with("model x")
+}
+
 /// Provider list in catalog (file) order — deterministic iteration
-/// (REGISTRY is a HashMap with random order).
-pub static PROVIDER_LIST: Lazy<Vec<RegistryProvider>> =
-    Lazy::new(|| serde_json::from_str(RAW_JSON).expect("providers.json must be valid"));
+/// (REGISTRY is a HashMap with random order). Junk models are filtered out.
+pub static PROVIDER_LIST: Lazy<Vec<RegistryProvider>> = Lazy::new(|| {
+    let mut providers: Vec<RegistryProvider> =
+        serde_json::from_str(RAW_JSON).expect("providers.json must be valid");
+    for p in &mut providers {
+        p.models.retain(|m| !is_junk_model(&m.id));
+    }
+    providers
+});
 
 pub static REGISTRY: Lazy<HashMap<String, RegistryProvider>> = Lazy::new(|| {
     PROVIDER_LIST
@@ -138,5 +158,22 @@ mod tests {
     fn test_format_field() {
         let claude = get_provider("claude").expect("claude exists");
         assert_eq!(claude.format.as_deref(), Some("claude"));
+    }
+
+    #[test]
+    fn test_no_junk_models() {
+        // Scraped error messages / display-name duplicates must be filtered.
+        for p in PROVIDER_LIST.iter() {
+            for m in &p.models {
+                assert!(!is_junk_model(&m.id), "junk model: {}", m.id);
+            }
+        }
+        let oc = get_provider("opencode").expect("opencode exists");
+        assert!(oc.models.iter().any(|m| m.id == "deepseek-v4-flash-free"));
+        assert!(
+            !oc.models
+                .iter()
+                .any(|m| m.id.contains("must be passed") || m.id == "Model X is not supported")
+        );
     }
 }
