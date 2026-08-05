@@ -166,7 +166,10 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 // sidecar auto-start; events channel tersedia untuk M3
                 // (log streaming) via tauri_plugin_shell CommandEvent.
-                let _ = spawn_proxy(&handle, port);
+                match spawn_proxy(&handle, port) {
+                    Ok(_) => eprintln!("[omniroute-rs] proxy sidecar started on port {port}"),
+                    Err(e) => eprintln!("[omniroute-rs] proxy sidecar FAILED to start: {e}"),
+                }
             });
             Ok(())
         })
