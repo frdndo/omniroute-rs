@@ -11,6 +11,7 @@ pub mod config;
 pub mod costs;
 pub mod events;
 pub mod executor;
+pub mod free_providers;
 pub mod logs;
 pub mod mcp;
 pub mod proxy;

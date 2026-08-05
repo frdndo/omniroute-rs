@@ -165,14 +165,36 @@ impl ProviderExecutor {
         api_key: &str,
         base_override: Option<&str>,
     ) -> Result<Self, ExecutorError> {
+        // Default base URLs — all OpenAI-compatible unless noted (gemini).
         let (format, base) = match provider_id {
             "openai" => (ApiFormat::OpenAi, "https://api.openai.com/v1"),
             "deepseek" => (ApiFormat::OpenAi, "https://api.deepseek.com/v1"),
             "claude" => (ApiFormat::Claude, "https://api.anthropic.com/v1"),
-            "gemini" => (
+            "gemini" | "google" => (
                 ApiFormat::Gemini,
                 "https://generativelanguage.googleapis.com/v1beta",
             ),
+            "groq" => (ApiFormat::OpenAi, "https://api.groq.com/openai/v1"),
+            "mistral" => (ApiFormat::OpenAi, "https://api.mistral.ai/v1"),
+            "cerebras" => (ApiFormat::OpenAi, "https://api.cerebras.ai/v1"),
+            "huggingface" => (ApiFormat::OpenAi, "https://router.huggingface.co/v1"),
+            "openrouter" => (ApiFormat::OpenAi, "https://openrouter.ai/api/v1"),
+            "together" => (ApiFormat::OpenAi, "https://api.together.xyz/v1"),
+            "xai" => (ApiFormat::OpenAi, "https://api.x.ai/v1"),
+            "cohere" => (ApiFormat::OpenAi, "https://api.cohere.com/v2"),
+            "deepinfra" => (ApiFormat::OpenAi, "https://api.deepinfra.com/v1/openai"),
+            "sambanova" => (ApiFormat::OpenAi, "https://api.sambanova.ai/v1"),
+            "moonshot" => (ApiFormat::OpenAi, "https://api.moonshot.ai/v1"),
+            "nvidia" => (ApiFormat::OpenAi, "https://integrate.api.nvidia.com/v1"),
+            "fireworks" => (ApiFormat::OpenAi, "https://api.fireworks.ai/inference/v1"),
+            "perplexity" => (ApiFormat::OpenAi, "https://api.perplexity.ai"),
+            "zhipu" => (ApiFormat::OpenAi, "https://open.bigmodel.cn/api/paas/v4"),
+            "qwen" => (
+                ApiFormat::OpenAi,
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            ),
+            // public no-key endpoint (OpenCode free)
+            "opencode" => (ApiFormat::OpenAi, "https://opencode.ai/zen/v1"),
             other => return Err(ExecutorError::UnsupportedProvider(other.to_string())),
         };
         Ok(Self::new(format, base_override.unwrap_or(base), api_key))

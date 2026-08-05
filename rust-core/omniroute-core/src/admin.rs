@@ -12,6 +12,7 @@ use omniroute_db::{
     repos::provider_connection_repo,
 };
 use serde_json::{Value, json};
+use std::collections::HashMap;
 
 /// Admin API keys from `OMNIROUTE_ADMIN_KEYS` (comma-separated).
 /// If empty → admin endpoints are DISABLED (fail closed).
@@ -98,6 +99,99 @@ fn with_db<T>(
         .map_err(|e| e.to_string())?;
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     f(&conn)
+}
+
+/// GET /admin/free-providers?category=&configuredOnly= — curated free-tier
+/// catalog with installed flag + telemetry ranking.
+pub async fn list_free_providers(
+    State(state): State<crate::proxy::AppState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let category = params.get("category").map(|s| s.as_str());
+    let configured_only = params
+        .get("configuredOnly")
+        .is_some_and(|v| v == "1" || v == "true" || v == "yes");
+
+    let rows = with_db(&state, |conn| {
+        Ok(crate::free_providers::list_with_telemetry(
+            Some(conn),
+            category,
+            configured_only,
+        ))
+    })
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    Ok(Json(json!({ "object": "list", "data": rows })))
+}
+
+/// POST /admin/free-providers/{id}/add — one-click add a free provider.
+/// Body: { "api_key": "..." } (wajib untuk kategori apikey; kosong utk noauth).
+pub async fn add_free_provider(
+    State(state): State<crate::proxy::AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<Value>,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, String)> {
+    let fp = crate::free_providers::get(&id).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("free provider '{id}' tidak dikenal"),
+        )
+    })?;
+
+    if fp.category == "apikey" && body["api_key"].as_str().unwrap_or("").is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "api_key wajib diisi untuk provider kategori apikey".to_string(),
+        ));
+    }
+
+    let api_key = body["api_key"].as_str().map(String::from);
+    let name = body["name"]
+        .as_str()
+        .map(String::from)
+        .unwrap_or_else(|| fp.name.clone());
+    let now = chrono::Utc::now().to_rfc3339();
+
+    let conn_row = omniroute_db::models::ProviderConnection {
+        id: uuid::Uuid::new_v4().to_string(),
+        provider: fp.provider.clone(),
+        auth_type: Some("api".into()),
+        name: Some(name),
+        email: None,
+        api_key,
+        is_active: true,
+        priority: Some(1),
+        data: serde_json::json!({
+            "format": fp.format,
+            "base_url": fp.base_url,
+            "free_provider": fp.id,
+        }),
+        rate_limited_until: None,
+        backoff_level: None,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+
+    with_db(&state, |conn| {
+        omniroute_db::repos::provider_connection_repo::insert(conn, &conn_row)
+            .map_err(|e| e.to_string())
+    })
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    if let Some(db) = &state.db {
+        crate::events::Events::audit(
+            db,
+            "create",
+            "free_provider",
+            Some(&conn_row.id),
+            Some(&fp.id),
+        );
+    }
+
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({ "id": conn_row.id, "provider": fp.provider, "name": fp.name })),
+    ))
 }
 
 // ── Handlers ─────────────────────────────────────────────────────────
@@ -369,6 +463,8 @@ pub fn admin_router(state: crate::proxy::AppState) -> Router {
         .route("/providers", post(create_provider_connection))
         .route("/providers/{id}", put(update_provider_connection))
         .route("/providers/{id}", delete(delete_provider_connection))
+        .route("/free-providers", get(list_free_providers))
+        .route("/free-providers/{id}/add", post(add_free_provider))
         .route("/api-keys", get(list_api_keys))
         .route("/api-keys", post(create_api_key))
         .route("/api-keys/{id}", put(update_api_key))

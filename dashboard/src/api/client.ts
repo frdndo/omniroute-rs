@@ -90,6 +90,17 @@ export const api = {
     remove: (id: string) => req<{ ok: boolean }>(`/admin/combos/${id}`, { method: "DELETE" }),
   },
   settings: () => req<any>("/admin/settings"),
+  freeProviders: {
+    list: (params?: { category?: string; configuredOnly?: boolean }) => {
+      const qs = new URLSearchParams();
+      if (params?.category) qs.set("category", params.category);
+      if (params?.configuredOnly) qs.set("configuredOnly", "1");
+      const s = qs.toString();
+      return req<{ data: any[] }>(`/admin/free-providers${s ? `?${s}` : ""}`);
+    },
+    add: (id: string, body: { api_key?: string; name?: string }) =>
+      req<any>(`/admin/free-providers/${id}/add`, { method: "POST", body: JSON.stringify(body) }),
+  },
   logs: () => req<{ data: LogEntry[]; uptime_seconds: number }>("/admin/logs"),
   stats: () => req<any>("/admin/stats"),
   costs: (month: string) => req<any>(`/admin/costs?month=${month}`),

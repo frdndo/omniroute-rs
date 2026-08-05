@@ -68,6 +68,40 @@ pub fn by_provider(conn: &Connection) -> Vec<serde_json::Value> {
     rows.filter_map(|r| r.ok()).collect()
 }
 
+/// Per-provider health stats with error rate (chat calls) — powers the
+/// free-provider rankings. Returns JSON rows: provider, requests,
+/// avg_duration_ms, errors, error_rate.
+pub fn provider_stats(conn: &Connection) -> Vec<serde_json::Value> {
+    let mut stmt = match conn.prepare(
+        "SELECT COALESCE(provider, 'unknown'),
+                COUNT(*),
+                AVG(duration_ms),
+                SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END)
+         FROM request_logs
+         WHERE provider IS NOT NULL
+         GROUP BY provider
+         ORDER BY COUNT(*) DESC",
+    ) {
+        Ok(s) => s,
+        Err(_) => return vec![],
+    };
+    let rows = match stmt.query_map([], |r| {
+        let requests = r.get::<_, i64>(1)?;
+        let errors = r.get::<_, i64>(3)?;
+        Ok(serde_json::json!({
+            "provider": r.get::<_, String>(0)?,
+            "requests": requests,
+            "avg_duration_ms": r.get::<_, f64>(2)?,
+            "errors": errors,
+            "error_rate": if requests > 0 { errors as f64 / requests as f64 } else { 0.0 },
+        }))
+    }) {
+        Ok(rows) => rows,
+        Err(_) => return vec![],
+    };
+    rows.filter_map(|r| r.ok()).collect()
+}
+
 /// Bucket counts for the last `hours` hours (0-filled).
 pub fn hourly_counts(conn: &Connection, hours: i64) -> Vec<serde_json::Value> {
     let mut stmt = match conn.prepare(
