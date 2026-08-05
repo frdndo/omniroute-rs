@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.frdndo.omniroute-rs",
   "build": {
-    "beforeDevCommand": "cd ../dashboard && npm run dev",
+    "beforeDevCommand": "cd dashboard && npm run dev",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "cd ../dashboard && VITE_PROXY_BASE=http://127.0.0.1:20129 npm run build",
+    "beforeBuildCommand": "cd dashboard && VITE_PROXY_BASE=http://127.0.0.1:20129 npm run build",
     "frontendDist": "../dashboard/dist"
   },
   "app": {
