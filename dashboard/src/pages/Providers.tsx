@@ -115,6 +115,7 @@ export default function Providers() {
                   onClick={() => {
                     setEditing(r);
                     form.setFieldsValue({
+                      provider: r.provider,
                       name: r.name,
                       api_key: "",
                       is_active: r.is_active,
