@@ -50,10 +50,28 @@ fn spawn_proxy(
 ) -> Result<tauri_plugin_shell::process::CommandChild, String> {
     let db_path = proxy_db_path(app);
     let shell = app.shell();
-    let (_events, child) = shell
-        .command("binaries/omniroute-server")
+    let mut command = shell.command("binaries/omniroute-server");
+    command = command
         .env("OMNIROUTE_PORT", port.to_string())
-        .env("OMNIROUTE_DB_PATH", db_path)
+        .env("OMNIROUTE_DB_PATH", db_path);
+
+    // Dev convenience: proxy fail-closed tanpa ADMIN_KEYS (semua /admin
+    // → 503). Di DEBUG build, isi default kalau env tidak diset supaya
+    // login langsung jalan. Release build tetap strict (tanpa default).
+    #[cfg(debug_assertions)]
+    {
+        if std::env::var("OMNIROUTE_ADMIN_KEYS").is_err() {
+            command = command.env("OMNIROUTE_ADMIN_KEYS", "sk-admin");
+        }
+        if std::env::var("OMNIROUTE_API_KEYS").is_err() {
+            command = command.env("OMNIROUTE_API_KEYS", "sk-gateway");
+        }
+        if std::env::var("OMNIROUTE_ALLOWED_HOSTS").is_err() {
+            command = command.env("OMNIROUTE_ALLOWED_HOSTS", "localhost,127.0.0.1");
+        }
+    }
+
+    let (_events, child) = command
         .spawn()
         .map_err(|e| format!("spawn failed: {e}"))?;
     Ok(child)
