@@ -133,7 +133,11 @@ impl RoutingEngine {
     /// Resolve the provider id that owns a model.
     pub fn resolve_provider(&self, model: &str) -> Result<&'static str, ExecutorError> {
         // 1. Known prefixes — deterministic, resolves ambiguity when many
-        //    providers carry the same model (e.g. gpt-4o appears in 8+)
+        //    providers carry the same model (e.g. gpt-4o appears in 8+).
+        //    Prefix-provider diprioritaskan HANYA kalau punya account yang
+        //    dikonfigurasi — kalau tidak (mis. "deepseek-v4-flash-free"
+        //    tapi deepseek belum dikonfigurasi), coba registry dulu; model
+        //    bisa jadi milik provider noauth seperti opencode.
         let lower = model.to_lowercase();
         let known: &[(&str, &str)] = &[
             ("gpt-", "openai"),
@@ -144,15 +148,36 @@ impl RoutingEngine {
             ("gemini-", "gemini"),
             ("deepseek-", "deepseek"),
         ];
+        let mut prefix_hit: Option<&'static str> = None;
         for (prefix, provider) in known {
             if lower.starts_with(prefix) {
-                return Ok(provider);
+                prefix_hit = Some(provider);
+                break;
             }
         }
+        match prefix_hit {
+            Some(p) if self.config.accounts.has_provider(p) => return Ok(p),
+            _ => {}
+        }
 
-        // 2. Registry match (exact, then prefix) for everything else
-        if let Some(pid) = omniroute_providers::resolve_provider_for_model(model) {
-            return Ok(pid);
+        // 2. Registry match (exact, then prefix) — pilih dari SEMUA provider
+        //    yang punya model (pool, urutan katalog deterministik): prefer
+        //    yang punya account terkonfigurasi atau noauth (parity OmniRoute
+        //    `pool.map(provider => ...)`); fallback ke resolve acak lama.
+        let pool = omniroute_providers::providers_for_model(model);
+        if !pool.is_empty() {
+            for p in &pool {
+                if self.config.accounts.has_provider(p) || crate::free_providers::is_noauth(p) {
+                    return Ok(p);
+                }
+            }
+            return Ok(pool[0]);
+        }
+
+        // 3. Fallback ke prefix hit (better than error; route() akan
+        //    menolak kalau provider tidak punya account)
+        if let Some(p) = prefix_hit {
+            return Ok(p);
         }
 
         Err(ExecutorError::UnsupportedProvider(format!(
@@ -182,7 +207,7 @@ impl RoutingEngine {
                 .unwrap_or_default()
         };
 
-        if account_key.is_empty() {
+        if account_key.is_empty() && !crate::free_providers::is_noauth(provider_id) {
             return Err(ExecutorError::AuthFailed(0));
         }
 
@@ -239,7 +264,7 @@ impl RoutingEngine {
                 .unwrap_or_default()
         };
 
-        if account_key.is_empty() {
+        if account_key.is_empty() && !crate::free_providers::is_noauth(provider_id) {
             return Err(ExecutorError::AuthFailed(0));
         }
 
@@ -307,6 +332,28 @@ mod tests {
             .resolve_provider("nonexistent-model-xyz")
             .unwrap_err();
         assert!(matches!(err, ExecutorError::UnsupportedProvider(_)));
+    }
+
+    #[test]
+    fn test_resolve_falls_to_registry_when_prefix_provider_unconfigured() {
+        // "deepseek-v4-flash-free" starts with "deepseek-" prefix, tapi
+        // engine ini TIDAK punya akun deepseek → harus resolve ke opencode
+        // (registry exact match), bukan deepseek.
+        let config = RouterConfig::default().with_key("openai", "sk-openai");
+        let engine = RoutingEngine::new(config);
+        assert_eq!(
+            engine.resolve_provider("deepseek-v4-flash-free").unwrap(),
+            "opencode"
+        );
+    }
+
+    #[test]
+    fn test_resolve_prefix_wins_when_configured() {
+        let engine = engine_with_keys(); // punya deepseek
+        assert_eq!(
+            engine.resolve_provider("deepseek-chat").unwrap(),
+            "deepseek"
+        );
     }
 
     #[test]

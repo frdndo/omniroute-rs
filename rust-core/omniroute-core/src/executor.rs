@@ -118,16 +118,23 @@ impl ProviderExecutor {
         let mut builder = self.client.post(&url).json(&body);
 
         match self.api_format {
+            // No-auth providers (e.g. opencode free) have an empty key —
+            // skip the auth header entirely in that case.
             ApiFormat::OpenAi => {
-                builder = builder.bearer_auth(&self.api_key);
+                if !self.api_key.is_empty() {
+                    builder = builder.bearer_auth(&self.api_key);
+                }
             }
             ApiFormat::Claude => {
-                builder = builder
-                    .header("x-api-key", &self.api_key)
-                    .header("anthropic-version", "2023-06-01");
+                if !self.api_key.is_empty() {
+                    builder = builder.header("x-api-key", &self.api_key);
+                }
+                builder = builder.header("anthropic-version", "2023-06-01");
             }
             ApiFormat::Gemini => {
-                builder = builder.query(&[("key", &self.api_key)]);
+                if !self.api_key.is_empty() {
+                    builder = builder.query(&[("key", &self.api_key)]);
+                }
             }
         }
 

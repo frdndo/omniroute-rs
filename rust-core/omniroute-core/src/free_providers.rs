@@ -42,10 +42,10 @@ pub fn catalog() -> Vec<FreeProvider> {
             signup_url: None,
             api_key_url: None,
             models: vec![
-                "kimi-k2".into(),
-                "glm-4.5-air".into(),
-                "qwen3-coder".into(),
-                "minimax-m1".into(),
+                "deepseek-v4-flash-free".into(),
+                "mimo-v2.5-free".into(),
+                "hy3-free".into(),
+                "big-pickle".into(),
             ],
         },
         FreeProvider {
@@ -133,6 +133,13 @@ pub fn catalog() -> Vec<FreeProvider> {
 
 pub fn get(id: &str) -> Option<FreeProvider> {
     catalog().into_iter().find(|p| p.id == id)
+}
+
+/// True if a provider id is a no-auth provider (no API key needed).
+pub fn is_noauth(provider_id: &str) -> bool {
+    catalog()
+        .iter()
+        .any(|p| p.category == "noauth" && p.provider == provider_id)
 }
 
 /// Provider ids that are already configured (from DB connections).

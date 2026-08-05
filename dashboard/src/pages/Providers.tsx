@@ -16,11 +16,12 @@ export default function Providers() {
 
   const testConn = async () => {
     const provider = form.getFieldValue("provider");
-    const api_key = form.getFieldValue("api_key");
-    if (!provider || !api_key) {
-      message.error("Isi Provider ID & API Key dulu");
+    if (!provider) {
+      message.error("Isi Provider ID dulu");
       return;
     }
+    // api_key opsional — provider noauth (opencode) jalan tanpa key.
+    const api_key = form.getFieldValue("api_key") || "";
     setTestBusy(true);
     setTestResult(null);
     try {

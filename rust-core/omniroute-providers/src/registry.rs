@@ -28,10 +28,16 @@ pub struct RegistryModel {
 
 static RAW_JSON: &str = include_str!("../data/providers.json");
 
+/// Provider list in catalog (file) order — deterministic iteration
+/// (REGISTRY is a HashMap with random order).
+pub static PROVIDER_LIST: Lazy<Vec<RegistryProvider>> =
+    Lazy::new(|| serde_json::from_str(RAW_JSON).expect("providers.json must be valid"));
+
 pub static REGISTRY: Lazy<HashMap<String, RegistryProvider>> = Lazy::new(|| {
-    let providers: Vec<RegistryProvider> =
-        serde_json::from_str(RAW_JSON).expect("providers.json must be valid");
-    providers.into_iter().map(|p| (p.id.clone(), p)).collect()
+    PROVIDER_LIST
+        .iter()
+        .map(|p| (p.id.clone(), p.clone()))
+        .collect()
 });
 
 pub fn get_provider(id: &str) -> Option<&'static RegistryProvider> {
@@ -56,21 +62,28 @@ pub fn model_count() -> usize {
 
 /// Resolve the provider id that owns a model (exact match first, then prefix).
 pub fn resolve_provider_for_model(model: &str) -> Option<&'static str> {
-    for (pid, p) in REGISTRY.iter() {
-        if p.models.iter().any(|m| m.id == model) {
-            return Some(pid.as_str());
-        }
-    }
+    providers_for_model(model).into_iter().next()
+}
+
+/// ALL providers that carry a model — exact matches first, then prefix
+/// matches, in catalog (file) order — deterministic, mirrors OmniRoute's
+/// `pool` (all providers registering a model).
+pub fn providers_for_model(model: &str) -> Vec<&'static str> {
     let lower = model.to_lowercase();
-    for (pid, p) in REGISTRY.iter() {
-        if p.models
+    let mut exact = Vec::new();
+    let mut prefix = Vec::new();
+    for p in PROVIDER_LIST.iter() {
+        if p.models.iter().any(|m| m.id == model) {
+            exact.push(p.id.as_str());
+        } else if p
+            .models
             .iter()
             .any(|m| lower.starts_with(&m.id.to_lowercase()))
         {
-            return Some(pid.as_str());
+            prefix.push(p.id.as_str());
         }
     }
-    None
+    exact.into_iter().chain(prefix).collect()
 }
 
 #[cfg(test)]

@@ -202,9 +202,8 @@ pub async fn test_provider_connection(
     let provider = body["provider"]
         .as_str()
         .ok_or_else(|| (StatusCode::BAD_REQUEST, "provider wajib".to_string()))?;
-    let api_key = body["api_key"]
-        .as_str()
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, "api_key wajib".to_string()))?;
+    // api_key opsional — provider noauth (opencode) jalan tanpa key.
+    let api_key = body["api_key"].as_str().unwrap_or("").to_string();
     let base_override = body["base_url"]
         .as_str()
         .map(String::from)
@@ -219,7 +218,7 @@ pub async fn test_provider_connection(
 
     let executor = crate::executor::ProviderExecutor::from_provider_id_with_base(
         provider,
-        api_key,
+        &api_key,
         base_override.as_deref(),
     )
     .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
