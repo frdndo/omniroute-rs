@@ -10,8 +10,8 @@ export default defineConfig({
     // (devUrl Tauri tetap nunjuk 5173 → kalau pindah, webview blank)
     strictPort: true,
     watch: {
-      // jangan re-compile saat tauri nulis ke src-tauri/target
-      ignored: ['**/src-tauri/**'],
+      // jangan re-compile saat build tools nulis file (target dirs)
+      ignored: ['**/src-tauri/**', '**/rust-core/**', '**/target/**'],
     },
   },
 })
