@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Table, Button, Modal, Form, Input, InputNumber, Switch, Space, Tag, message, Popconfirm, Tabs, Card, Typography } from "antd";
+import { Table, Button, Modal, Form, Input, InputNumber, Switch, Space, Tag, message, Popconfirm, Tabs, Card, Typography, Alert } from "antd";
 import { PlusOutlined, RocketOutlined } from "@ant-design/icons";
 import { api } from "../api/client";
 import type { ProviderConnection } from "../api/client";
@@ -178,6 +178,19 @@ function FreeTab() {
   };
 
   if (q.isLoading) return <Typography.Text type="secondary">Loading...</Typography.Text>;
+  if (q.isError) {
+    return (
+      <Alert
+        type="error"
+        showIcon
+        message="Gagal memuat free providers"
+        description={String(q.error instanceof Error ? q.error.message : q.error)}
+      />
+    );
+  }
+  if (!q.data?.data?.length) {
+    return <Alert type="info" showIcon message="Belum ada data" description="Pastikan sidecar proxy sudah di-rebuild (fitur free provider ada di binary proxy, bukan app shell)." />;
+  }
 
   return (
     <div>
