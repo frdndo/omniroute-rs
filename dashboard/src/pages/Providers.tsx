@@ -11,6 +11,27 @@ export default function Providers() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<ProviderConnection | null>(null);
   const [form] = Form.useForm();
+  const [testBusy, setTestBusy] = useState(false);
+  const [testResult, setTestResult] = useState<any>(null);
+
+  const testConn = async () => {
+    const provider = form.getFieldValue("provider");
+    const api_key = form.getFieldValue("api_key");
+    if (!provider || !api_key) {
+      message.error("Isi Provider ID & API Key dulu");
+      return;
+    }
+    setTestBusy(true);
+    setTestResult(null);
+    try {
+      const r = await api.providers.test({ provider, api_key });
+      setTestResult(r);
+    } catch (e: any) {
+      setTestResult({ ok: false, error: e.message });
+    } finally {
+      setTestBusy(false);
+    }
+  };
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["providers"] });
 
@@ -130,6 +151,20 @@ export default function Providers() {
           <Form.Item name="api_key" label="API Key" rules={[{ required: !editing }]}>
             <Input placeholder={editing ? "kosongkan = tidak diganti" : "sk-..."} />
           </Form.Item>
+          <Space>
+            <Button onClick={testConn} loading={testBusy} size="small">
+              Test Koneksi
+            </Button>
+            {testResult && (
+              testResult.ok ? (
+                <Tag color="green">
+                  ✅ OK · {testResult.latency_ms}ms · {testResult.model}
+                </Tag>
+              ) : (
+                <Tag color="red">❌ {String(testResult.error || testResult.message || "gagal")}</Tag>
+              )
+            )}
+          </Space>
           <Space size={32}>
             <Form.Item name="priority" label="Priority">
               <InputNumber min={1} />

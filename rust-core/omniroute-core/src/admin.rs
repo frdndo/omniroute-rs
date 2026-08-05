@@ -194,6 +194,89 @@ pub async fn add_free_provider(
     ))
 }
 
+/// POST /admin/providers/test — kirim request chat kecil untuk verifikasi
+/// key + koneksi sebelum disimpan. Body: { provider, api_key, base_url?, model? }.
+pub async fn test_provider_connection(
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let provider = body["provider"]
+        .as_str()
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "provider wajib".to_string()))?;
+    let api_key = body["api_key"]
+        .as_str()
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "api_key wajib".to_string()))?;
+    let base_override = body["base_url"]
+        .as_str()
+        .map(String::from)
+        .or_else(|| crate::config::base_urls_from_env().get(provider).cloned());
+
+    let model = body["model"].as_str().map(String::from).unwrap_or_else(|| {
+        omniroute_providers::get_provider(provider)
+            .and_then(|p| p.models.first())
+            .map(|m| m.id.clone())
+            .unwrap_or_else(|| "gpt-4o-mini".to_string())
+    });
+
+    let executor = crate::executor::ProviderExecutor::from_provider_id_with_base(
+        provider,
+        api_key,
+        base_override.as_deref(),
+    )
+    .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    let req = crate::chat::ChatRequest {
+        model: model.clone(),
+        messages: vec![crate::chat::Message {
+            role: "user".into(),
+            content: Some(crate::chat::Content::Text("ping".into())),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }],
+        stream: Some(false),
+        max_tokens: Some(4),
+        temperature: None,
+        top_p: None,
+        stop: None,
+        tools: None,
+        tool_choice: None,
+        extra: None,
+        cache: false,
+        cache_ttl: None,
+        compress: false,
+        max_context_tokens: None,
+    };
+
+    let start = std::time::Instant::now();
+    match executor.execute_chat(&req).await {
+        Ok(resp) => {
+            let reply = resp
+                .choices
+                .first()
+                .and_then(|c| c.message.content.as_ref())
+                .map(|c| match c {
+                    crate::chat::Content::Text(s) => s.clone(),
+                    _ => "(non-text)".to_string(),
+                })
+                .unwrap_or_default();
+            Ok(Json(json!({
+                "ok": true,
+                "provider": provider,
+                "model": model,
+                "latency_ms": start.elapsed().as_millis(),
+                "reply": reply,
+            })))
+        }
+        Err(e) => Ok(Json(json!({
+            "ok": false,
+            "provider": provider,
+            "model": model,
+            "latency_ms": start.elapsed().as_millis(),
+            "error": e.to_string(),
+        }))),
+    }
+}
+
 // ── Handlers ─────────────────────────────────────────────────────────
 
 pub async fn list_provider_connections(
@@ -461,6 +544,7 @@ pub fn admin_router(state: crate::proxy::AppState) -> Router {
     Router::new()
         .route("/providers", get(list_provider_connections))
         .route("/providers", post(create_provider_connection))
+        .route("/providers/test", post(test_provider_connection))
         .route("/providers/{id}", put(update_provider_connection))
         .route("/providers/{id}", delete(delete_provider_connection))
         .route("/free-providers", get(list_free_providers))

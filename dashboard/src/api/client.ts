@@ -75,8 +75,10 @@ export const api = {
   providers: {
     list: () => req<{ data: ProviderConnection[] }>("/admin/providers"),
     create: (body: any) => req<{ id: string }>("/admin/providers", { method: "POST", body: JSON.stringify(body) }),
-    update: (id: string, body: any) => req<{ ok: boolean }>(`/admin/providers/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+    update: (id: string, body: any) => req<any>(`/admin/providers/${id}`, { method: "PUT", body: JSON.stringify(body) }),
     remove: (id: string) => req<{ ok: boolean }>(`/admin/providers/${id}`, { method: "DELETE" }),
+    test: (body: { provider: string; api_key: string; base_url?: string; model?: string }) =>
+      req<any>("/admin/providers/test", { method: "POST", body: JSON.stringify(body) }),
   },
   keys: {
     list: () => req<{ data: ApiKey[] }>("/admin/api-keys"),
