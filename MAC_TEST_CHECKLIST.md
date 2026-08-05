@@ -11,8 +11,8 @@ Mac, mulai dari prereq sampai release. Ikuti berurutan; centang tiap langkah.
 
 - [ ] `xcode-select --install` (Xcode CLT)
 - [ ] Rust via rustup: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` → `source ~/.cargo/env`
-- [ ] Node: `brew install node`
-- [ ] Tauri CLI: `cargo install cargo-tauri-cli --locked`
+- [ ] Node LTS 24: `brew install node@24` (sama dengan CI; kalau keg-only, tambah ke PATH: `/opt/homebrew/opt/node@24/bin`)
+- [ ] Tauri CLI: `cargo install tauri-cli --locked` (bukan cargo-tauri-cli!)
 - [ ] `cd omniroute-rs && git pull` (ambil kode terbaru)
 
 ## B. Build Sidecar (binary proxy)

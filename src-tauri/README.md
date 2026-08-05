@@ -46,8 +46,8 @@ cp target/release/server ../src-tauri/binaries/omniroute-server
 
 ```bash
 cd src-tauri
-cargo install cargo-tauri-cli --locked     # sekali saja
-npm run tauri icon <logo-1024.png>        # ganti placeholder icon (wajib utk .icns)
+cargo install tauri-cli --locked     # crate tauri-cli, binary cargo-tauri
+cargo tauri icon <logo-1024.png>           # ganti placeholder icon (wajib utk .icns) — bukan npm run!
 cargo tauri build
 # → target/release/bundle/macos/omniroute-rs.app
 # → target/release/bundle/macos/omniroute-rs_0.1.0_aarch64.dmg

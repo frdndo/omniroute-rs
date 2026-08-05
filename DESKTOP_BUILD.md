@@ -38,11 +38,14 @@ xcode-select --install
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
-# Node.js (buat dashboard)
-brew install node
+# Node.js LTS 24 (pin versi — samakan dengan CI; jangan 'brew install node'
+# polos yang bisa dapat Node 26 belum teruji)
+brew install node@24
+# (node@24 keg-only di Homebrew? tambahin ke PATH:
+#  echo 'export PATH="/opt/homebrew/opt/node@24/bin:$PATH"' >> ~/.zshrc)
 
-# Tauri CLI
-cargo install cargo-tauri-cli --locked
+# Tauri CLI (crate-nya tauri-cli; binary-nya cargo-tauri)
+cargo install tauri-cli --locked
 
 # Dependensi dashboard (WAJIB sebelum build — beforeBuildCommand
 # menjalankan npm run build di ../dashboard)
