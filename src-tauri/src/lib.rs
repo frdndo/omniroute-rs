@@ -50,7 +50,12 @@ fn spawn_proxy(
 ) -> Result<tauri_plugin_shell::process::CommandChild, String> {
     let db_path = proxy_db_path(app);
     let shell = app.shell();
-    let mut command = shell.command("binaries/omniroute-server");
+    // WAJIB sidecar() bukan command() — externalBin butuh resolusi suffix
+    // target triple + path dev/prod yang berbeda. command() (raw) gagal
+    // nemuin binary → proxy gak pernah spawn → dashboard "Load failed".
+    let mut command = shell
+        .sidecar("binaries/omniroute-server")
+        .map_err(|e| format!("sidecar resolve failed: {e}"))?;
     command = command
         .env("OMNIROUTE_PORT", port.to_string())
         .env("OMNIROUTE_DB_PATH", db_path);
