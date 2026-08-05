@@ -88,8 +88,11 @@ pub fn bearer_token(headers: &axum::http::HeaderMap) -> Option<String> {
 /// `/admin/*` is excluded — it has its own stricter auth.
 /// Reads keys from an Arc<RwLock<GatewayKeys>> so admin changes apply live.
 pub async fn auth_middleware(request: Request, next: Next) -> Result<Response, StatusCode> {
-    // Admin routes are protected by admin auth (separate key)
-    if request.uri().path().starts_with("/admin") {
+    // Admin routes are protected by admin auth (separate key);
+    // /health is public (liveness probe — dashboard & Tauri shell call it
+    // without keys).
+    let path = request.uri().path();
+    if path.starts_with("/admin") || path == "/health" {
         return Ok(next.run(request).await);
     }
 

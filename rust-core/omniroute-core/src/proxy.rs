@@ -308,6 +308,11 @@ pub fn build_router(state: AppState) -> Router {
         state.allowed_hosts.clone(),
     );
 
+    // CORS DI LUAR auth/host-guard: response error (401/403) dari
+    // middleware juga harus punya Access-Control-Allow-Origin — kalau
+    // tidak, browser cross-origin dashboard dapat "Failed to fetch".
+    let hardened = hardened.layer(CorsLayer::permissive());
+
     // TraceLayer OUTERMOST → logs every request incl. auth rejections (401/403)
     hardened.layer(
         TraceLayer::new_for_http()
