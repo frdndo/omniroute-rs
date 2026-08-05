@@ -196,8 +196,22 @@ function ModelsOfProvider({ provider }: { provider: string }) {
     queryFn: () => api.catalog.list({ provider, limit: 500 }),
   });
   if (q.isLoading) return <Typography.Text type="secondary">Loading models...</Typography.Text>;
-  if (q.isError)
-    return <Alert type="error" showIcon message="Gagal memuat models" description={String((q.error as any)?.message ?? q.error)} />;
+  if (q.isError) {
+    const msg = String((q.error as any)?.message ?? q.error);
+    const stale = msg.includes("404");
+    return (
+      <Alert
+        type="error"
+        showIcon
+        message="Gagal memuat models"
+        description={
+          stale
+            ? "404 — endpoint /admin/models tidak ditemukan. Sidecar proxy masih binary LAMA: git pull + rebuild sidecar (cargo build --release -p omniroute-core --bin server && cp ke src-tauri/binaries/)."
+            : msg
+        }
+      />
+    );
+  }
   const models = q.data?.data ?? [];
   if (!models.length) return <Typography.Text type="secondary">Tidak ada model terdaftar di registry untuk provider ini.</Typography.Text>;
   return (
