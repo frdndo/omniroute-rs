@@ -59,6 +59,12 @@ function Shell() {
   const authed = !!getAdminKey();
 
   if (!authed) {
+    // JANGAN Navigate kalau sudah di /login — react-router v8 loop
+    // diam-diam (Navigate ke lokasi sama) → blank white.
+    // Render Login langsung di sini.
+    if (location.pathname === "/login") {
+      return <Login />;
+    }
     return <Navigate to="/login" replace />;
   }
 
