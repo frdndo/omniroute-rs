@@ -2,7 +2,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::State;
+use tauri::{Manager, State};
 use tauri_plugin_shell::ShellExt;
 
 /// M0 Tauri shell: spawns the omniroute-rs proxy (sidecar binary) on port
@@ -33,6 +33,32 @@ struct ProxyStatus {
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Absolute SQLite path inside the app data dir (bundled .app runs with
+/// CWD=/ — a relative path like data/omniroute.db would fail to write).
+fn proxy_db_path(app: &tauri::AppHandle) -> String {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join("omniroute.db").to_string_lossy().into_owned()
+}
+
+fn spawn_proxy(
+    app: &tauri::AppHandle,
+    port: u16,
+) -> Result<tauri_plugin_shell::process::CommandChild, String> {
+    let db_path = proxy_db_path(app);
+    let shell = app.shell();
+    let (_events, child) = shell
+        .command("binaries/omniroute-server")
+        .env("OMNIROUTE_PORT", port.to_string())
+        .env("OMNIROUTE_DB_PATH", db_path)
+        .spawn()
+        .map_err(|e| format!("spawn failed: {e}"))?;
+    Ok(child)
+}
+
 #[tauri::command]
 fn proxy_status(state: State<ProxyState>) -> ProxyStatus {
     let running = state.child.lock().map(|c| c.is_some()).unwrap_or(false);
@@ -56,14 +82,9 @@ async fn proxy_start(app: tauri::AppHandle, state: State<'_, ProxyState>) -> Res
                 version: VERSION.to_string(),
             });
         }
-        let shell = app.shell();
-        let (_events, child) = shell
-            .command("binaries/omniroute-server")
-            .env("OMNIROUTE_PORT", state.port.to_string())
-            .env("OMNIROUTE_DB_PATH", "data/omniroute.db")
-            .spawn()
-            .map_err(|e| format!("spawn failed: {e}"))?;
-        *guard = Some(child);
+        if let Ok(child) = spawn_proxy(&app, state.port) {
+            *guard = Some(child);
+        }
     }
 
     // Wait for the proxy to be reachable (up to 5s).
@@ -120,16 +141,9 @@ pub fn run() {
             let handle = app.handle().clone();
             let port = 20129;
             tauri::async_runtime::spawn(async move {
-                let shell = handle.shell();
-                let result = shell
-                    .command("binaries/omniroute-server")
-                    .env("OMNIROUTE_PORT", port.to_string())
-                    .env("OMNIROUTE_DB_PATH", "data/omniroute.db")
-                    .spawn();
-                if let Ok((_events, _child)) = result {
-                    // sidecar running; events channel can be used later
-                    // for log streaming (M3 systray)
-                }
+                // sidecar auto-start; events channel tersedia untuk M3
+                // (log streaming) via tauri_plugin_shell CommandEvent.
+                let _ = spawn_proxy(&handle, port);
             });
             Ok(())
         })
