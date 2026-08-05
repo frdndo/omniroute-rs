@@ -44,18 +44,48 @@ fn proxy_db_path(app: &tauri::AppHandle) -> String {
     dir.join("omniroute.db").to_string_lossy().into_owned()
 }
 
+fn sidecar_name() -> String {
+    format!("omniroute-server-{}", env!("TAURI_ENV_TARGET_TRIPLE"))
+}
+
 fn spawn_proxy(
     app: &tauri::AppHandle,
     port: u16,
 ) -> Result<tauri_plugin_shell::process::CommandChild, String> {
     let db_path = proxy_db_path(app);
+    let name = sidecar_name();
+
+    // Resolve path sidecar MANUAL — shell.sidecar() resolve-nya beda di
+    // dev (target/debug/binaries/...) vs lokasi file asli
+    // (src-tauri/binaries/...) → ENOENT "No such file or directory".
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(res) = app.path().resource_dir() {
+        candidates.push(res.join("binaries").join(&name)); // prod (bundled)
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            // dev: exe = src-tauri/target/debug/omniroute-rs → ../../binaries
+            candidates.push(dir.join("..").join("..").join("binaries").join(&name));
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join("binaries").join(&name)); // dev fallback
+    }
+
+    let bin = candidates
+        .iter()
+        .find(|p| p.exists())
+        .ok_or_else(|| {
+            let tried = candidates
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("sidecar '{name}' not found (tried: {tried})")
+        })?;
+
     let shell = app.shell();
-    // WAJIB sidecar() bukan command() — externalBin butuh resolusi suffix
-    // target triple + path dev/prod yang berbeda. command() (raw) gagal
-    // nemuin binary → proxy gak pernah spawn → dashboard "Load failed".
-    let mut command = shell
-        .sidecar("binaries/omniroute-server")
-        .map_err(|e| format!("sidecar resolve failed: {e}"))?;
+    let mut command = shell.command(bin.clone());
     command = command
         .env("OMNIROUTE_PORT", port.to_string())
         .env("OMNIROUTE_DB_PATH", db_path);
