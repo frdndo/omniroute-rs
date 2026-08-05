@@ -77,6 +77,8 @@ cd omniroute-rs/rust-core
 CARGO_BUILD_JOBS=1 cargo build --release -p omniroute-core --bin server
 
 # Copy ke src-tauri/binaries DENGAN SUFFIX target triple:
+#   (folder binaries/ TIDAK ikut git — buat dulu kalau belum ada)
+mkdir -p ../src-tauri/binaries
 #   Apple Silicon (M1/M2/M3/M4):
 cp target/release/server ../src-tauri/binaries/omniroute-server-aarch64-apple-darwin
 #   Intel Mac:

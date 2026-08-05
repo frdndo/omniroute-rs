@@ -18,6 +18,7 @@ Mac, mulai dari prereq sampai release. Ikuti berurutan; centang tiap langkah.
 ## B. Build Sidecar (binary proxy)
 
 - [ ] `cd rust-core && CARGO_BUILD_JOBS=1 cargo build --release -p omniroute-core --bin server`
+- [ ] `mkdir -p ../src-tauri/binaries` (folder binaries gak ikut git!)
 - [ ] Copy binary dengan suffix triple:
   - Apple Silicon: `cp target/release/server ../src-tauri/binaries/omniroute-server-aarch64-apple-darwin`
   - Intel: `cp target/release/server ../src-tauri/binaries/omniroute-server-x86_64-apple-darwin`
