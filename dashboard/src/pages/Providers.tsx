@@ -91,6 +91,10 @@ export default function Providers() {
                 rowKey="id"
                 dataSource={q.data?.data || []}
                 loading={q.isLoading}
+                expandable={{
+                  expandedRowRender: (r) => <ModelsOfProvider provider={r.provider} />,
+                  expandRowByClick: false,
+                }}
                 columns={[
           { title: "Provider", dataIndex: "provider" },
           { title: "Nama", dataIndex: "name", render: (v) => v || "—" },
@@ -183,6 +187,32 @@ export default function Providers() {
         { key: "free", label: "Free (Tanpa Bayar)", children: <FreeTab /> },
       ]}
     />
+  );
+}
+
+function ModelsOfProvider({ provider }: { provider: string }) {
+  const q = useQuery({
+    queryKey: ["models", provider],
+    queryFn: () => api.catalog.list({ provider, limit: 500 }),
+  });
+  if (q.isLoading) return <Typography.Text type="secondary">Loading models...</Typography.Text>;
+  if (q.isError)
+    return <Alert type="error" showIcon message="Gagal memuat models" description={String((q.error as any)?.message ?? q.error)} />;
+  const models = q.data?.data ?? [];
+  if (!models.length) return <Typography.Text type="secondary">Tidak ada model terdaftar di registry untuk provider ini.</Typography.Text>;
+  return (
+    <div>
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        {models.length} model (dari registry providers)
+      </Typography.Text>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+        {models.map((m) => (
+          <Tag key={m.id} style={{ fontFamily: "monospace" }}>
+            {m.id}
+          </Tag>
+        ))}
+      </div>
+    </div>
   );
 }
 

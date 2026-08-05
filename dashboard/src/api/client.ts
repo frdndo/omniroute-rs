@@ -92,6 +92,18 @@ export const api = {
     remove: (id: string) => req<{ ok: boolean }>(`/admin/combos/${id}`, { method: "DELETE" }),
   },
   settings: () => req<any>("/admin/settings"),
+  catalog: {
+    list: (params?: { provider?: string; q?: string; limit?: number }) => {
+      const qs = new URLSearchParams();
+      if (params?.provider) qs.set("provider", params.provider);
+      if (params?.q) qs.set("q", params.q);
+      if (params?.limit) qs.set("limit", String(params.limit));
+      const q = qs.toString();
+      return req<{ data: { id: string; name?: string | null; provider: string }[]; total: number }>(
+        `/admin/models${q ? `?${q}` : ""}`
+      );
+    },
+  },
   freeProviders: {
     list: (params?: { category?: string; configuredOnly?: boolean }) => {
       const qs = new URLSearchParams();

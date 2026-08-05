@@ -194,6 +194,35 @@ pub async fn add_free_provider(
     ))
 }
 
+/// GET /admin/models?provider=&q=&limit= — model list dari registry
+/// (parity OmniRoute provider detail: getModelsByProviderId).
+pub async fn list_models(
+    Query(q): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let provider = q.get("provider").cloned();
+    let search = q.get("q").map(|s| s.to_lowercase()).unwrap_or_default();
+    let limit: usize = q.get("limit").and_then(|v| v.parse().ok()).unwrap_or(1000);
+
+    let mut out = Vec::new();
+    'outer: for p in omniroute_providers::PROVIDER_LIST.iter() {
+        if provider.as_ref().is_some_and(|pid| p.id != *pid) {
+            continue;
+        }
+        for m in &p.models {
+            if !search.is_empty() && !m.id.to_lowercase().contains(&search) {
+                continue;
+            }
+            out.push(json!({ "id": m.id, "name": m.name, "provider": p.id }));
+            if out.len() >= limit {
+                break 'outer;
+            }
+        }
+    }
+    Ok(Json(
+        json!({ "object": "list", "data": out, "total": out.len() }),
+    ))
+}
+
 /// POST /admin/providers/test — kirim request chat kecil untuk verifikasi
 /// key + koneksi sebelum disimpan. Body: { provider, api_key, base_url?, model? }.
 pub async fn test_provider_connection(
@@ -544,6 +573,7 @@ pub fn admin_router(state: crate::proxy::AppState) -> Router {
         .route("/providers", get(list_provider_connections))
         .route("/providers", post(create_provider_connection))
         .route("/providers/test", post(test_provider_connection))
+        .route("/models", get(list_models))
         .route("/providers/{id}", put(update_provider_connection))
         .route("/providers/{id}", delete(delete_provider_connection))
         .route("/free-providers", get(list_free_providers))
