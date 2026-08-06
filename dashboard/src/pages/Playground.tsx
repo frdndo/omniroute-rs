@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import type { ReactNode } from "react";
 import { Card, Input, Button, Select, Space, Switch, Alert } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import { api, getGatewayKey, setGatewayKey } from "../api/client";
@@ -6,6 +7,13 @@ import { api, getGatewayKey, setGatewayKey } from "../api/client";
 export default function Playground() {
   const models = useQuery({ queryKey: ["models"], queryFn: api.models });
   const combos = useQuery({ queryKey: ["combos"], queryFn: api.combos.list });
+  // Provider terkonfigurasi (butuh admin key) — dipakai biar label model
+  // nunjukin provider yang KEMUNGKINAN BESAR dipakai resolver
+  const configured = useQuery({ queryKey: ["providers"], queryFn: api.providers.list });
+  const cfgSet = useMemo(
+    () => new Set((configured.data?.data as any[])?.map((p: any) => p.provider) ?? []),
+    [configured.data]
+  );
   const [model, setModel] = useState<string>("gpt-4o");
   const [prompt, setPrompt] = useState("");
   const [stream, setStream] = useState(false);
@@ -14,33 +22,59 @@ export default function Playground() {
   const [gwKey, setGwKey] = useState(getGatewayKey());
 
   // Grup per provider (owned_by) — parity playground asli yang filter
-  // model per provider. Combos juga bisa dipilih sebagai "model".
-  // Model id DUPLIKAT (satu model di banyak provider, mis. deepseek-v4-pro
-  // di 5+ provider) di-dedupe first-wins — kalau tidak, antd Select
-  // nyangkut (banyak option value sama).
+  // model per provider + selalu tampilkan provider (label 'provider/model').
+  // Model id DUPLIKAT di-dedupe: pilih owner yang TERKONFIGURASI dulu
+  // (sama kayak resolver pool), fallback first-wins — jadi label = provider
+  // yang kemungkinan besar dipakai routing.
   const grouped = useMemo(() => {
-    const byProvider = new Map<string, { value: string; label: string }[]>();
-    const seen = new Set<string>();
+    const ownerOf = new Map<string, string>();
     for (const m of (models.data?.data as any[]) ?? []) {
-      if (seen.has(m.id)) continue;
-      seen.add(m.id);
       const owner = (m.owned_by as string) || "lainnya";
+      const prev = ownerOf.get(m.id);
+      if (!prev) ownerOf.set(m.id, owner);
+      else if (!cfgSet.has(prev) && cfgSet.has(owner)) ownerOf.set(m.id, owner);
+    }
+    const byProvider = new Map<string, { value: string; label: ReactNode }[]>();
+    for (const m of (models.data?.data as any[]) ?? []) {
+      const owner = (m.owned_by as string) || "lainnya";
+      if (ownerOf.get(m.id) !== owner) continue; // model cuma di 1 grup (pemiliknya)
       if (!byProvider.has(owner)) byProvider.set(owner, []);
-      byProvider.get(owner)!.push({ value: m.id, label: m.id });
+      byProvider.get(owner)!.push({
+        value: m.id,
+        label: (
+          <span style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+            <span style={{ fontFamily: "monospace" }}>{m.id}</span>
+            <span style={{ color: "#999", fontSize: 11, flexShrink: 0 }}>
+              {owner}
+              {cfgSet.has(owner) ? " ⚙" : ""}
+            </span>
+          </span>
+        ),
+      });
     }
     const groups = [...byProvider.entries()].map(([provider, options]) => ({
-      label: provider,
+      label: `${provider} (${options.length})`,
       options,
     }));
     const comboList = (combos.data?.data as any[]) ?? [];
     if (comboList.length) {
       groups.unshift({
-        label: "⚡ Combo",
-        options: comboList.map((c) => ({ value: c.name ?? c.id, label: `${c.name ?? c.id} (combo)` })),
+        label: `⚡ Combo (${comboList.length})`,
+        options: comboList.map((c) => ({
+          value: c.name ?? c.id,
+          label: (
+            <span style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+              <span>{c.name ?? c.id}</span>
+              <span style={{ color: "#999", fontSize: 11, flexShrink: 0 }}>
+                {((c.models as string[]) ?? []).join(" → ")}
+              </span>
+            </span>
+          ),
+        })),
       });
     }
     return groups;
-  }, [models.data, combos.data]);
+  }, [models.data, combos.data, cfgSet]);
 
   const send = async () => {
     if (!prompt) return;
