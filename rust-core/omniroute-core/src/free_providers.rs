@@ -6,6 +6,12 @@ use serde::Serialize;
 /// - `noauth`: no API key needed (public endpoints)
 /// - `apikey`: free-tier providers that need a (free) API key
 ///
+/// OmniRoute asli: 104 free providers (9 noauth + 95 apikey free-tier).
+/// Kita: 41 (4 noauth + 37 apikey) — subset yang endpoint-nya stabil &
+/// beneran free tier. Yang di-skip: reverse-engineered web-scrape
+/// (duckduckgo-web, felo-web, veoaifree-web, auggie, chipotle) yang rawan
+/// berubah tanpa notice, plus regional CN providers.
+///
 /// Rankings use OUR telemetry (request_logs) instead of OmniRoute's
 /// external ELO scores — real observed latency/error rate per provider.
 
@@ -26,10 +32,57 @@ pub struct FreeProvider {
     pub models: Vec<String>,
 }
 
-/// Curated free-tier catalog (kept deliberately small & stable — no
-/// reverse-engineered endpoints like DDG/Felo which break without notice).
+/// Model ids "free" dari registry provider (fallback: 3 pertama).
+fn registry_free_models(models: &[omniroute_providers::RegistryModel]) -> Vec<String> {
+    let free: Vec<String> = models
+        .iter()
+        .filter(|m| m.id.to_lowercase().contains("free"))
+        .map(|m| m.id.clone())
+        .collect();
+    if !free.is_empty() {
+        return free.into_iter().take(6).collect();
+    }
+    models.iter().take(3).map(|m| m.id.clone()).collect()
+}
+
+/// Builder: format/base_url/models diambil dari registry curated (220
+/// provider) — konsisten dengan executor. Models auto-fill (free dulu).
+fn mk(
+    id: &str,
+    name: &str,
+    category: &str,
+    free_note: &str,
+    auth_hint: &str,
+    signup: Option<&str>,
+    key_url: Option<&str>,
+) -> FreeProvider {
+    let reg = omniroute_providers::get_provider(id);
+    let format = reg
+        .and_then(|p| p.format.clone())
+        .unwrap_or_else(|| "openai".into());
+    let base_url = reg.and_then(|p| p.base_url.clone()).unwrap_or_default();
+    let models = reg
+        .map(|p| registry_free_models(&p.models))
+        .unwrap_or_default();
+    FreeProvider {
+        id: id.into(),
+        name: name.into(),
+        category: category.into(),
+        provider: id.into(),
+        format,
+        base_url,
+        free_note: free_note.into(),
+        auth_hint: auth_hint.into(),
+        signup_url: signup.map(String::from),
+        api_key_url: key_url.map(String::from),
+        models,
+    }
+}
+
+/// Curated free-tier catalog.
 pub fn catalog() -> Vec<FreeProvider> {
     vec![
+        // ── NOAUTH (tanpa key) ─────────────────────────────────────────
         FreeProvider {
             id: "opencode".into(),
             name: "OpenCode Free".into(),
@@ -37,7 +90,7 @@ pub fn catalog() -> Vec<FreeProvider> {
             provider: "opencode".into(),
             format: "openai".into(),
             base_url: "https://opencode.ai/zen/v1".into(),
-            free_note: "No API key required — public OpenCode endpoint (Kimi, GLM, Qwen, MiniMax). Rate limits apply.".into(),
+            free_note: "No API key required — public OpenCode endpoint (DeepSeek, MiMo, HY3, Big Pickle). Rate limits apply.".into(),
             auth_hint: "No credentials needed — langsung aktif dengan tombol Add.".into(),
             signup_url: None,
             api_key_url: None,
@@ -48,6 +101,34 @@ pub fn catalog() -> Vec<FreeProvider> {
                 "big-pickle".into(),
             ],
         },
+        mk(
+            "mimocode",
+            "Mimocode",
+            "noauth",
+            "Public free endpoint — coding models tanpa API key.",
+            "No credentials needed.",
+            None,
+            None,
+        ),
+        mk(
+            "theoldllm",
+            "TheOldLLM",
+            "noauth",
+            "Public free endpoint — open models tanpa API key.",
+            "No credentials needed.",
+            None,
+            None,
+        ),
+        mk(
+            "aihorde",
+            "AI Horde",
+            "noauth",
+            "Komunitas distributed inference — gratis, antrean berdasarkan kudos.",
+            "No credentials needed (kudos opsional untuk prioritas).",
+            None,
+            None,
+        ),
+        // ── APIKEY free-tier ───────────────────────────────────────────
         FreeProvider {
             id: "gemini".into(),
             name: "Google Gemini Free Tier".into(),
@@ -128,6 +209,294 @@ pub fn catalog() -> Vec<FreeProvider> {
                 "mistralai/Mistral-7B-Instruct-v0.3".into(),
             ],
         },
+        mk(
+            "deepseek",
+            "DeepSeek",
+            "apikey",
+            "Model DeepSeek murah banget, kadang free-tier promo — key dari platform.deepseek.com.",
+            "API key di platform.deepseek.com/api_keys.",
+            Some("https://platform.deepseek.com"),
+            Some("https://platform.deepseek.com/api_keys"),
+        ),
+        mk(
+            "openrouter",
+            "OpenRouter (Free Models)",
+            "apikey",
+            "Ribuan model, banyak yang gratis (suffix ':free') — satu key buat semua.",
+            "API key di openrouter.ai/keys.",
+            Some("https://openrouter.ai"),
+            Some("https://openrouter.ai/keys"),
+        ),
+        mk(
+            "fireworks",
+            "Fireworks AI",
+            "apikey",
+            "Hosting model open-source super cepat, free tier tersedia.",
+            "API key di fireworks.ai/login.",
+            Some("https://fireworks.ai"),
+            None,
+        ),
+        mk(
+            "nvidia",
+            "NVIDIA NIM",
+            "apikey",
+            "Llama & Qwen via NVIDIA NIM — free credits untuk mulai.",
+            "API key di build.nvidia.com.",
+            Some("https://build.nvidia.com"),
+            None,
+        ),
+        mk(
+            "siliconflow",
+            "SiliconFlow",
+            "apikey",
+            "Model open-source Cina & global, free tier murah.",
+            "API key di cloud.siliconflow.cn.",
+            Some("https://cloud.siliconflow.cn"),
+            None,
+        ),
+        mk(
+            "github-models",
+            "GitHub Models",
+            "apikey",
+            "Akses model frontier (GPT, Claude, Gemini) via GitHub — rate limit gratis.",
+            "Butuh GitHub account + token — docs.github.com/models.",
+            Some("https://github.com/marketplace/models"),
+            None,
+        ),
+        mk(
+            "deepinfra",
+            "DeepInfra",
+            "apikey",
+            "Inference open-source murah, ada free tier.",
+            "API key di deepinfra.com/dash.",
+            Some("https://deepinfra.com"),
+            Some("https://deepinfra.com/dash/api_keys"),
+        ),
+        mk(
+            "sambanova",
+            "SambaNova",
+            "apikey",
+            "Llama 4 & DeepSeek cepat — free tier preview.",
+            "API key di cloud.sambanova.ai.",
+            Some("https://cloud.sambanova.ai"),
+            None,
+        ),
+        mk(
+            "nebius",
+            "Nebius AI",
+            "apikey",
+            "Studio model open-source — free credits untuk mulai.",
+            "API key di studio.nebius.ai.",
+            Some("https://studio.nebius.ai"),
+            None,
+        ),
+        mk(
+            "hyperbolic",
+            "Hyperbolic",
+            "apikey",
+            "Inference open-source murah, free credits awal.",
+            "API key di app.hyperbolic.xyz.",
+            Some("https://app.hyperbolic.xyz"),
+            None,
+        ),
+        mk(
+            "ollama-cloud",
+            "Ollama Cloud",
+            "apikey",
+            "Model open-source via Ollama Cloud — ada free tier.",
+            "API key di ollama.com/cloud.",
+            Some("https://ollama.com/cloud"),
+            None,
+        ),
+        mk(
+            "puter",
+            "Puter AI",
+            "apikey",
+            "Free credits bulanan untuk model frontier.",
+            "API key di developer.puter.com.",
+            Some("https://developer.puter.com"),
+            None,
+        ),
+        mk(
+            "pollinations",
+            "Pollinations AI",
+            "apikey",
+            "Model gratis via Pollinations — open & community.",
+            "Bisa tanpa key, atau API key di pollinations.ai.",
+            Some("https://pollinations.ai"),
+            None,
+        ),
+        mk(
+            "cohere",
+            "Cohere",
+            "apikey",
+            "Command R gratis (trial API key) — key dari dashboard.cohere.com.",
+            "API key di dashboard.cohere.com/api-keys.",
+            Some("https://dashboard.cohere.com"),
+            Some("https://dashboard.cohere.com/api-keys"),
+        ),
+        mk(
+            "reka",
+            "Reka AI",
+            "apikey",
+            "Flash & open models — $10/bulan free API credits.",
+            "API key di platform.reka.ai.",
+            Some("https://platform.reka.ai"),
+            None,
+        ),
+        mk(
+            "ai21",
+            "AI21 Labs",
+            "apikey",
+            "Jamba & Jurassic — free tier tersedia.",
+            "API key di ai21.com/studio.",
+            Some("https://www.ai21.com/studio"),
+            None,
+        ),
+        mk(
+            "nous-research",
+            "Nous Research",
+            "apikey",
+            "Hermes & open models via Nous — free credits.",
+            "API key di nousresearch.com.",
+            Some("https://nousresearch.com"),
+            None,
+        ),
+        mk(
+            "liquid",
+            "Liquid AI",
+            "apikey",
+            "LFM models efisien — free tier.",
+            "API key di liquid.ai.",
+            Some("https://www.liquid.ai"),
+            None,
+        ),
+        mk(
+            "dgrid",
+            "DGrid",
+            "apikey",
+            "Router open-source model — free tier.",
+            "API key di dgrid.site.",
+            Some("https://dgrid.site"),
+            None,
+        ),
+        mk(
+            "novita",
+            "Novita AI",
+            "apikey",
+            "Inference murah, $0.5 credit untuk mulai.",
+            "API key di novita.ai.",
+            Some("https://novita.ai"),
+            None,
+        ),
+        mk(
+            "morph",
+            "Morph",
+            "apikey",
+            "Open-source inference, free credits.",
+            "API key di morph.so.",
+            Some("https://morph.so"),
+            None,
+        ),
+        mk(
+            "blackbox",
+            "Blackbox AI",
+            "apikey",
+            "Coding models — free tier.",
+            "API key di blackbox.ai.",
+            Some("https://www.blackbox.ai"),
+            None,
+        ),
+        mk(
+            "moonshot",
+            "Moonshot AI",
+            "apikey",
+            "Kimi models — free credits awal.",
+            "API key di platform.moonshot.cn.",
+            Some("https://platform.moonshot.cn"),
+            None,
+        ),
+        mk(
+            "together",
+            "Together AI",
+            "apikey",
+            "Hosting open-source, $1 free credit awal.",
+            "API key di api.together.ai/settings/api-keys.",
+            Some("https://www.together.ai"),
+            Some("https://api.together.ai/settings/api-keys"),
+        ),
+        mk(
+            "xai",
+            "xAI (Grok)",
+            "apikey",
+            "Grok via xAI — free tier terbatas.",
+            "API key di console.x.ai.",
+            Some("https://console.x.ai"),
+            None,
+        ),
+        mk(
+            "qwen-cloud",
+            "Qwen Cloud",
+            "apikey",
+            "Qwen via Alibaba Cloud — free quota pemula.",
+            "API key di bailian.console.aliyun.com.",
+            Some("https://bailian.console.aliyun.com"),
+            None,
+        ),
+        mk(
+            "trae",
+            "Trae",
+            "apikey",
+            "Coding models via Trae — free tier.",
+            "API key di trae.ai.",
+            Some("https://www.trae.ai"),
+            None,
+        ),
+        mk(
+            "friendliai",
+            "FriendliAI",
+            "apikey",
+            "Inference serverless — free tier.",
+            "API key di friendli.ai/signup.",
+            Some("https://friendli.ai"),
+            None,
+        ),
+        mk(
+            "monsterapi",
+            "MonsterAPI",
+            "apikey",
+            "Open-source models — free credits awal.",
+            "API key di monsterapi.ai.",
+            Some("https://monsterapi.ai"),
+            None,
+        ),
+        mk(
+            "featherless-ai",
+            "Featherless AI",
+            "apikey",
+            "Ribuan model open-source, free tier.",
+            "API key di featherless.ai.",
+            Some("https://featherless.ai"),
+            None,
+        ),
+        mk(
+            "nscale",
+            "nScale",
+            "apikey",
+            "Open-source inference — free tier.",
+            "API key di nscale.ai.",
+            Some("https://nscale.ai"),
+            None,
+        ),
+        mk(
+            "baseten",
+            "Baseten",
+            "apikey",
+            "Model hosting — free credits.",
+            "API key di baseten.ai.",
+            Some("https://baseten.ai"),
+            None,
+        ),
     ]
 }
 
