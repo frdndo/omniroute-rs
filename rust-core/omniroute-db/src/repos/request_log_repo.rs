@@ -48,8 +48,8 @@ pub fn avg_duration(conn: &Connection) -> f64 {
 /// Requests + avg latency per provider (chat calls only).
 pub fn by_provider(conn: &Connection) -> Vec<serde_json::Value> {
     let mut stmt = match conn.prepare(
-        "SELECT COALESCE(provider, 'unknown'), COUNT(*), AVG(duration_ms)
-         FROM request_logs GROUP BY COALESCE(provider, 'unknown')
+        "SELECT COALESCE(provider, 'non-chat (health/admin/models)'), COUNT(*), AVG(duration_ms)
+         FROM request_logs GROUP BY COALESCE(provider, 'non-chat (health/admin/models)')
          ORDER BY COUNT(*) DESC",
     ) {
         Ok(s) => s,
@@ -201,7 +201,7 @@ mod tests {
         assert!(avg_duration(&c) > 0.0);
 
         let by_prov = by_provider(&c);
-        assert_eq!(by_prov.len(), 2, "openai + unknown (health row)");
+        assert_eq!(by_prov.len(), 2, "openai + non-chat (health row)");
         let openai = by_prov.iter().find(|p| p["provider"] == "openai").unwrap();
         assert_eq!(openai["requests"], 2);
 
