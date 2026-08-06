@@ -15,9 +15,15 @@ export default function Playground() {
 
   // Grup per provider (owned_by) — parity playground asli yang filter
   // model per provider. Combos juga bisa dipilih sebagai "model".
+  // Model id DUPLIKAT (satu model di banyak provider, mis. deepseek-v4-pro
+  // di 5+ provider) di-dedupe first-wins — kalau tidak, antd Select
+  // nyangkut (banyak option value sama).
   const grouped = useMemo(() => {
     const byProvider = new Map<string, { value: string; label: string }[]>();
+    const seen = new Set<string>();
     for (const m of (models.data?.data as any[]) ?? []) {
+      if (seen.has(m.id)) continue;
+      seen.add(m.id);
       const owner = (m.owned_by as string) || "lainnya";
       if (!byProvider.has(owner)) byProvider.set(owner, []);
       byProvider.get(owner)!.push({ value: m.id, label: m.id });
