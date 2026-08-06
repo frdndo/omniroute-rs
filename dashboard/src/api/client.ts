@@ -99,10 +99,15 @@ export const api = {
       if (params?.q) qs.set("q", params.q);
       if (params?.limit) qs.set("limit", String(params.limit));
       const q = qs.toString();
-      return req<{ data: { id: string; name?: string | null; provider: string }[]; total: number }>(
+      return req<{ data: { id: string; name?: string | null; provider: string; context_length?: number | null; supports_reasoning?: boolean | null; synced?: boolean }[]; total: number }>(
         `/admin/models${q ? `?${q}` : ""}`
       );
     },
+    sync: (provider: string) =>
+      req<{ ok: boolean; provider: string; synced: number; url: string }>("/admin/models/sync", {
+        method: "POST",
+        body: JSON.stringify({ provider }),
+      }),
   },
   freeProviders: {
     list: (params?: { category?: string; configuredOnly?: boolean }) => {

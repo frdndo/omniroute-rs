@@ -7,4 +7,5 @@ pub mod provider_stats_repo;
 pub mod request_log_repo;
 pub mod session_affinity_repo;
 pub mod settings_repo;
+pub mod synced_models_repo;
 pub mod webhook_repo;

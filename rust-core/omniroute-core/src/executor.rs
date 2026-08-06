@@ -108,7 +108,18 @@ impl ProviderExecutor {
     }
 
     async fn execute_chat_inner(&self, req: &ChatRequest) -> Result<ChatResponse, ExecutorError> {
+        // Curated registry base_url sudah berisi endpoint path lengkap
+        // (https://api.openai.com/v1/chat/completions) — jangan append dobel.
+        // Env override (OMNIROUTE_BASE_URL_<PROVIDER>) biasanya base-only
+        // (https://api.openai.com/v1) → append path.
         let url = match self.api_format {
+            ApiFormat::OpenAi if self.base_url.ends_with("/chat/completions") => {
+                self.base_url.clone()
+            }
+            ApiFormat::Claude if self.base_url.ends_with("/messages") => self.base_url.clone(),
+            ApiFormat::Gemini if self.base_url.ends_with(":generateContent") => {
+                self.base_url.clone()
+            }
             ApiFormat::OpenAi => format!("{}/chat/completions", self.base_url),
             ApiFormat::Claude => format!("{}/messages", self.base_url),
             ApiFormat::Gemini => format!("{}/models/{}:generateContent", self.base_url, req.model),
@@ -172,7 +183,22 @@ impl ProviderExecutor {
         api_key: &str,
         base_override: Option<&str>,
     ) -> Result<Self, ExecutorError> {
-        // Default base URLs — all OpenAI-compatible unless noted (gemini).
+        // Prefer curated registry (base_url + format dari OmniRoute
+        // registry — 220 provider) sebelum fallback ke hardcoded match.
+        match omniroute_providers::get_provider(provider_id) {
+            Some(p) if p.base_url.is_some() => {
+                let base = p.base_url.as_deref().unwrap();
+                let fmt = match p.format.as_deref() {
+                    Some("claude" | "anthropic") => ApiFormat::Claude,
+                    Some("gemini") => ApiFormat::Gemini,
+                    _ => ApiFormat::OpenAi,
+                };
+                return Ok(Self::new(fmt, base_override.unwrap_or(base), api_key));
+            }
+            _ => {}
+        }
+
+        // Fallback: default base URLs — all OpenAI-compatible except...
         let (format, base) = match provider_id {
             "openai" => (ApiFormat::OpenAi, "https://api.openai.com/v1"),
             "deepseek" => (ApiFormat::OpenAi, "https://api.deepseek.com/v1"),
@@ -400,6 +426,15 @@ mod tests {
     async fn test_factory_creates_executor() {
         let exec = ProviderExecutor::from_provider_id("openai", "key").unwrap();
         assert_eq!(exec.api_format, ApiFormat::OpenAi);
-        assert_eq!(exec.base_url, "https://api.openai.com/v1");
+        // base_url dari curated registry = endpoint penuh
+        assert!(exec.base_url.ends_with("/chat/completions"));
+        // base_override (env) tetap menang
+        let exec2 = ProviderExecutor::from_provider_id_with_base(
+            "openai",
+            "key",
+            Some("http://127.0.0.1:9999/v1"),
+        )
+        .unwrap();
+        assert_eq!(exec2.base_url, "http://127.0.0.1:9999/v1");
     }
 }

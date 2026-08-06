@@ -6,6 +6,8 @@ use std::collections::HashMap;
 pub struct RegistryProvider {
     pub id: String,
     #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
     pub format: Option<String>,
     #[serde(default)]
     pub base_url: Option<String>,
@@ -13,6 +15,10 @@ pub struct RegistryProvider {
     pub auth_type: Option<String>,
     #[serde(default)]
     pub auth_header: Option<String>,
+    #[serde(default)]
+    pub auth_prefix: Option<String>,
+    #[serde(default)]
+    pub models_url: Option<String>,
     #[serde(default)]
     pub model_count: Option<usize>,
     #[serde(default)]
@@ -24,6 +30,10 @@ pub struct RegistryModel {
     pub id: String,
     #[serde(default)]
     pub name: Option<String>,
+    #[serde(default)]
+    pub context_length: Option<u64>,
+    #[serde(default)]
+    pub supports_reasoning: Option<bool>,
 }
 
 static RAW_JSON: &str = include_str!("../data/providers.json");

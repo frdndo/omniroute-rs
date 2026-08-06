@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Table, Button, Modal, Form, Input, InputNumber, Switch, Space, Tag, message, Popconfirm, Tabs, Card, Typography, Alert } from "antd";
-import { PlusOutlined, RocketOutlined } from "@ant-design/icons";
+import { PlusOutlined, RocketOutlined, SyncOutlined } from "@ant-design/icons";
 import { api } from "../api/client";
 import type { ProviderConnection } from "../api/client";
 
@@ -191,10 +191,24 @@ export default function Providers() {
 }
 
 function ModelsOfProvider({ provider }: { provider: string }) {
+  const qc = useQueryClient();
   const q = useQuery({
     queryKey: ["models", provider],
     queryFn: () => api.catalog.list({ provider, limit: 500 }),
   });
+  const [syncing, setSyncing] = useState(false);
+  const sync = async () => {
+    setSyncing(true);
+    try {
+      const r = await api.catalog.sync(provider);
+      message.success(`Sync ${r.synced} model dari API (${r.url})`);
+      qc.invalidateQueries({ queryKey: ["models", provider] });
+    } catch (e: any) {
+      message.error(`Sync gagal: ${e.message}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
   if (q.isLoading) return <Typography.Text type="secondary">Loading models...</Typography.Text>;
   if (q.isError) {
     const msg = String((q.error as any)?.message ?? q.error);
@@ -216,13 +230,21 @@ function ModelsOfProvider({ provider }: { provider: string }) {
   if (!models.length) return <Typography.Text type="secondary">Tidak ada model terdaftar di registry untuk provider ini.</Typography.Text>;
   return (
     <div>
-      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-        {models.length} model (dari registry providers)
-      </Typography.Text>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+      <Space style={{ marginBottom: 8 }} wrap>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {models.length} model (registry + synced)
+        </Typography.Text>
+        <Button size="small" onClick={sync} loading={syncing} icon={<SyncOutlined />}>
+          Sync dari API
+        </Button>
+      </Space>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
         {models.map((m) => (
           <Tag key={m.id} style={{ fontFamily: "monospace" }}>
             {m.id}
+            {m.context_length ? ` · ${Math.round(m.context_length / 1000)}k ctx` : ""}
+            {m.supports_reasoning ? " · 🧠" : ""}
+            {m.synced ? " · live" : ""}
           </Tag>
         ))}
       </div>

@@ -194,9 +194,21 @@ pub async fn add_free_provider(
     ))
 }
 
+/// Synced (live API) models utk provider dari DB — empty kalau DB off.
+fn synced_models(state: &crate::proxy::AppState, provider: &str) -> Vec<(String, Option<String>)> {
+    let Some(db) = &state.db else {
+        return Vec::new();
+    };
+    let Ok(conn) = db.conn.lock() else {
+        return Vec::new();
+    };
+    omniroute_db::repos::synced_models_repo::list_for_provider(&conn, provider).unwrap_or_default()
+}
+
 /// GET /admin/models?provider=&q=&limit= — model list dari registry
 /// (parity OmniRoute provider detail: getModelsByProviderId).
 pub async fn list_models(
+    State(state): State<crate::proxy::AppState>,
     Query(q): Query<HashMap<String, String>>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let provider = q.get("provider").cloned();
@@ -204,23 +216,158 @@ pub async fn list_models(
     let limit: usize = q.get("limit").and_then(|v| v.parse().ok()).unwrap_or(1000);
 
     let mut out = Vec::new();
-    'outer: for p in omniroute_providers::PROVIDER_LIST.iter() {
-        if provider.as_ref().is_some_and(|pid| p.id != *pid) {
-            continue;
-        }
-        for m in &p.models {
-            if !search.is_empty() && !m.id.to_lowercase().contains(&search) {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    // 1. Synced (live API) models dulu — preferred (parity OmniRoute:
+    //    "Prefer synced API-discovered models when available")
+    if let Some(pid) = &provider {
+        for (id, name) in synced_models(&state, pid) {
+            if !search.is_empty() && !id.to_lowercase().contains(&search) {
                 continue;
             }
-            out.push(json!({ "id": m.id, "name": m.name, "provider": p.id }));
+            out.push(json!({ "id": id, "name": name, "provider": pid, "synced": true }));
+            seen.insert(id.clone());
             if out.len() >= limit {
-                break 'outer;
+                break;
+            }
+        }
+    }
+
+    // 2. Registry (built-in curated catalog) — skip yang sudah ada
+    //    dari sync, tandai context_length/supports_reasoning.
+    if out.len() < limit {
+        'outer: for p in omniroute_providers::PROVIDER_LIST.iter() {
+            if provider.as_ref().is_some_and(|pid| p.id != *pid) {
+                continue;
+            }
+            for m in &p.models {
+                if !search.is_empty() && !m.id.to_lowercase().contains(&search) {
+                    continue;
+                }
+                if seen.contains(&m.id) {
+                    continue;
+                }
+                out.push(json!({
+                    "id": m.id,
+                    "name": m.name,
+                    "provider": p.id,
+                    "context_length": m.context_length,
+                    "supports_reasoning": m.supports_reasoning,
+                    "synced": false,
+                }));
+                seen.insert(m.id.clone());
+                if out.len() >= limit {
+                    break 'outer;
+                }
             }
         }
     }
     Ok(Json(
         json!({ "object": "list", "data": out, "total": out.len() }),
     ))
+}
+
+/// POST /admin/models/sync — fetch live model list dari modelsUrl provider
+/// (parity OmniRoute modelsUrl/passthroughModels). Body: { provider }.
+pub async fn sync_provider_models(
+    State(state): State<crate::proxy::AppState>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let provider = body["provider"]
+        .as_str()
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "provider wajib".to_string()))?;
+    let reg = omniroute_providers::get_provider(provider).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("provider tidak dikenal: {provider}"),
+        )
+    })?;
+    let url = reg
+        .models_url
+        .as_ref()
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("{provider} tidak punya models_url (tidak support live sync)"),
+            )
+        })?
+        .clone();
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("fetch {url} gagal: {e}")))?;
+    if !resp.status().is_success() {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            format!("fetch {url} → HTTP {}", resp.status()),
+        ));
+    }
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("baca body gagal: {e}")))?;
+    let parsed: Value = serde_json::from_str(&text)
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("response bukan JSON: {e}")))?;
+
+    let models = parsed
+        .get("data")
+        .and_then(|d| d.as_array())
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_GATEWAY,
+                "response tidak punya field data[]".to_string(),
+            )
+        })?;
+    let mut rows: Vec<(String, Option<String>)> = Vec::new();
+    for m in models {
+        if let Some(id) = m.get("id").and_then(|v| v.as_str()) {
+            rows.push((
+                id.to_string(),
+                m.get("name").and_then(|v| v.as_str()).map(String::from),
+            ));
+        }
+    }
+    if rows.is_empty() {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            "sync mengembalikan 0 model".to_string(),
+        ));
+    }
+
+    let count = if let Some(db) = &state.db {
+        if let Ok(conn) = db.conn.lock() {
+            omniroute_db::repos::synced_models_repo::upsert_many(&conn, provider, &rows)
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+
+    if let Some(db) = &state.db {
+        crate::events::Events::audit(
+            db,
+            "sync",
+            "models",
+            Some(provider),
+            Some(&format!("{count} model dari {url}")),
+        );
+    }
+
+    Ok(Json(json!({
+        "ok": true,
+        "provider": provider,
+        "synced": count,
+        "url": url,
+        "total": rows.len(),
+    })))
 }
 
 /// POST /admin/providers/test — kirim request chat kecil untuk verifikasi
@@ -574,6 +721,7 @@ pub fn admin_router(state: crate::proxy::AppState) -> Router {
         .route("/providers", post(create_provider_connection))
         .route("/providers/test", post(test_provider_connection))
         .route("/models", get(list_models))
+        .route("/models/sync", post(sync_provider_models))
         .route("/providers/{id}", put(update_provider_connection))
         .route("/providers/{id}", delete(delete_provider_connection))
         .route("/free-providers", get(list_free_providers))

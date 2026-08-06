@@ -169,6 +169,15 @@ pub fn run_migrations(conn: &Connection) -> Result<(), anyhow::Error> {
             detail TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_logs(ts);
+        -- v12: model live-sync (parity OmniRoute modelsUrl/passthroughModels)
+        CREATE TABLE IF NOT EXISTS synced_models (
+            provider TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            name TEXT,
+            raw TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (provider, model_id)
+        );
         ",
     )?;
 
