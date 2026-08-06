@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Table, Button, Modal, Form, Input, InputNumber, Switch, Space, Tag, message, Popconfirm, Tabs, Card, Typography, Alert } from "antd";
-import { PlusOutlined, RocketOutlined, SyncOutlined } from "@ant-design/icons";
+import { Table, Button, Modal, Form, Input, InputNumber, Switch, Space, Tag, message, Popconfirm, Tabs, Card, Typography, Alert, Checkbox } from "antd";
+import { PlusOutlined, RocketOutlined, SyncOutlined, ExperimentOutlined } from "@ant-design/icons";
 import { api } from "../api/client";
 import type { ProviderConnection } from "../api/client";
 
@@ -197,6 +197,11 @@ function ModelsOfProvider({ provider }: { provider: string }) {
     queryFn: () => api.catalog.list({ provider, limit: 500 }),
   });
   const [syncing, setSyncing] = useState(false);
+  const [search, setSearch] = useState("");
+  const [freeFirst, setFreeFirst] = useState(false);
+  const [testing, setTesting] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<Record<string, { ok: boolean; ms?: number; error?: string }>>({});
+
   const sync = async () => {
     setSyncing(true);
     try {
@@ -209,6 +214,20 @@ function ModelsOfProvider({ provider }: { provider: string }) {
       setSyncing(false);
     }
   };
+
+  const testModel = async (model: string) => {
+    setTesting(model);
+    try {
+      // key kosong → backend pakai key dari connection aktif provider
+      const r = await api.providers.test({ provider, api_key: "", model });
+      setTestResult((prev) => ({ ...prev, [model]: { ok: r.ok, ms: r.latency_ms, error: r.error } }));
+    } catch (e: any) {
+      setTestResult((prev) => ({ ...prev, [model]: { ok: false, error: e.message } }));
+    } finally {
+      setTesting(null);
+    }
+  };
+
   if (q.isLoading) return <Typography.Text type="secondary">Loading models...</Typography.Text>;
   if (q.isError) {
     const msg = String((q.error as any)?.message ?? q.error);
@@ -228,25 +247,82 @@ function ModelsOfProvider({ provider }: { provider: string }) {
   }
   const models = q.data?.data ?? [];
   if (!models.length) return <Typography.Text type="secondary">Tidak ada model terdaftar di registry untuk provider ini.</Typography.Text>;
+
+  let shown = models;
+  if (search.trim()) {
+    const s = search.toLowerCase();
+    shown = shown.filter((m) => m.id.toLowerCase().includes(s) || (m.name ?? "").toLowerCase().includes(s));
+  }
+  if (freeFirst) {
+    shown = [...shown].sort((a, b) => {
+      const af = /free|gratis/i.test(a.id) || /free|gratis/i.test(a.name ?? "") ? 0 : 1;
+      const bf = /free|gratis/i.test(b.id) || /free|gratis/i.test(b.name ?? "") ? 0 : 1;
+      return af - bf;
+    });
+  }
+
   return (
     <div>
       <Space style={{ marginBottom: 8 }} wrap>
+        <Input
+          size="small"
+          placeholder="Cari model…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          allowClear
+          style={{ width: 180 }}
+        />
+        <Checkbox checked={freeFirst} onChange={(e) => setFreeFirst(e.target.checked)}>
+          Free first
+        </Checkbox>
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          {models.length} model (registry + synced)
+          {shown.length}/{models.length} model
         </Typography.Text>
         <Button size="small" onClick={sync} loading={syncing} icon={<SyncOutlined />}>
           Sync dari API
         </Button>
       </Space>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-        {models.map((m) => (
-          <Tag key={m.id} style={{ fontFamily: "monospace" }}>
-            {m.id}
-            {m.context_length ? ` · ${Math.round(m.context_length / 1000)}k ctx` : ""}
-            {m.supports_reasoning ? " · 🧠" : ""}
-            {m.synced ? " · live" : ""}
-          </Tag>
-        ))}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 360, overflowY: "auto" }}>
+        {shown.map((m) => {
+          const t = testResult[m.id];
+          const isFree = /free|gratis/i.test(m.id) || /free|gratis/i.test(m.name ?? "");
+          return (
+            <div
+              key={m.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                border: "1px solid #f0f0f0",
+                borderRadius: 8,
+                padding: "6px 10px",
+              }}
+            >
+              <span style={{ fontFamily: "monospace", fontSize: 12, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {m.id}
+              </span>
+              {m.context_length ? (
+                <Tag style={{ marginInlineEnd: 0 }}>{Math.round(m.context_length / 1000)}k ctx</Tag>
+              ) : null}
+              {m.supports_reasoning ? <Tag style={{ marginInlineEnd: 0 }}>🧠</Tag> : null}
+              {isFree ? <Tag color="green" style={{ marginInlineEnd: 0 }}>free</Tag> : null}
+              {m.synced ? <Tag color="blue" style={{ marginInlineEnd: 0 }}>live</Tag> : null}
+              {t?.ok ? (
+                <Tag color="green" style={{ marginInlineEnd: 0 }}>✅ {t.ms}ms</Tag>
+              ) : t && !t.ok ? (
+                <Tag color="red" style={{ marginInlineEnd: 0 }} title={t.error}>❌</Tag>
+              ) : null}
+              <Button
+                size="small"
+                type="text"
+                icon={<ExperimentOutlined />}
+                loading={testing === m.id}
+                onClick={() => testModel(m.id)}
+                title="Test model ini"
+              />
+            </div>
+          );
+        })}
       </div>
     </div>
   );

@@ -373,13 +373,34 @@ pub async fn sync_provider_models(
 /// POST /admin/providers/test — kirim request chat kecil untuk verifikasi
 /// key + koneksi sebelum disimpan. Body: { provider, api_key, base_url?, model? }.
 pub async fn test_provider_connection(
+    State(state): State<crate::proxy::AppState>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let provider = body["provider"]
         .as_str()
         .ok_or_else(|| (StatusCode::BAD_REQUEST, "provider wajib".to_string()))?;
     // api_key opsional — provider noauth (opencode) jalan tanpa key.
-    let api_key = body["api_key"].as_str().unwrap_or("").to_string();
+    let mut api_key = body["api_key"].as_str().unwrap_or("").to_string();
+    // Kalau key kosong & provider punya connection aktif, pakai key dari
+    // DB (fitur "test model" dari halaman model list).
+    if api_key.is_empty() {
+        let stored_key = state
+            .db
+            .as_ref()
+            .and_then(|db| db.conn.lock().ok())
+            .and_then(|conn| {
+                omniroute_db::repos::provider_connection_repo::get_active(&conn)
+                    .ok()
+                    .and_then(|rows| {
+                        rows.iter()
+                            .find(|c| c.provider == provider)
+                            .and_then(|c| c.api_key.clone())
+                    })
+            });
+        if let Some(k) = stored_key {
+            api_key = k;
+        }
+    }
     let base_override = body["base_url"]
         .as_str()
         .map(String::from)
