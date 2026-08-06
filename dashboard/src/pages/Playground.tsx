@@ -1,8 +1,8 @@
 import { useState, useMemo } from "react";
-import type { ReactNode } from "react";
 import { Card, Input, Button, Select, Space, Switch, Alert } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import { api, getGatewayKey, setGatewayKey } from "../api/client";
+import { buildModelGroups, modelFilterOption } from "../utils/modelGroups";
 
 export default function Playground() {
   const models = useQuery({ queryKey: ["models"], queryFn: api.models });
@@ -14,6 +14,10 @@ export default function Playground() {
     () => new Set((configured.data?.data as any[])?.map((p: any) => p.provider) ?? []),
     [configured.data]
   );
+  const modelGroups = useMemo(
+    () => buildModelGroups((models.data?.data as any[]) ?? [], cfgSet),
+    [models.data, cfgSet]
+  );
   const [model, setModel] = useState<string>("gpt-4o");
   const [prompt, setPrompt] = useState("");
   const [stream, setStream] = useState(false);
@@ -21,44 +25,12 @@ export default function Playground() {
   const [output, setOutput] = useState("");
   const [gwKey, setGwKey] = useState(getGatewayKey());
 
-  // Grup per provider (owned_by) — parity playground asli yang filter
-  // model per provider + selalu tampilkan provider (label 'provider/model').
-  // Model id DUPLIKAT di-dedupe: pilih owner yang TERKONFIGURASI dulu
-  // (sama kayak resolver pool), fallback first-wins — jadi label = provider
-  // yang kemungkinan besar dipakai routing.
+  // Grup model per provider (util shared) + grup combo dengan chain di atas.
   const grouped = useMemo(() => {
-    const ownerOf = new Map<string, string>();
-    for (const m of (models.data?.data as any[]) ?? []) {
-      const owner = (m.owned_by as string) || "lainnya";
-      const prev = ownerOf.get(m.id);
-      if (!prev) ownerOf.set(m.id, owner);
-      else if (!cfgSet.has(prev) && cfgSet.has(owner)) ownerOf.set(m.id, owner);
-    }
-    const byProvider = new Map<string, { value: string; label: ReactNode }[]>();
-    for (const m of (models.data?.data as any[]) ?? []) {
-      const owner = (m.owned_by as string) || "lainnya";
-      if (ownerOf.get(m.id) !== owner) continue; // model cuma di 1 grup (pemiliknya)
-      if (!byProvider.has(owner)) byProvider.set(owner, []);
-      byProvider.get(owner)!.push({
-        value: m.id,
-        label: (
-          <span style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-            <span style={{ fontFamily: "monospace" }}>{m.id}</span>
-            <span style={{ color: "#999", fontSize: 11, flexShrink: 0 }}>
-              {owner}
-              {cfgSet.has(owner) ? " ⚙" : ""}
-            </span>
-          </span>
-        ),
-      });
-    }
-    const groups = [...byProvider.entries()].map(([provider, options]) => ({
-      label: `${provider} (${options.length})`,
-      options,
-    }));
     const comboList = (combos.data?.data as any[]) ?? [];
-    if (comboList.length) {
-      groups.unshift({
+    if (!comboList.length) return modelGroups;
+    return [
+      {
         label: `⚡ Combo (${comboList.length})`,
         options: comboList.map((c) => ({
           value: c.name ?? c.id,
@@ -71,10 +43,10 @@ export default function Playground() {
             </span>
           ),
         })),
-      });
-    }
-    return groups;
-  }, [models.data, combos.data, cfgSet]);
+      },
+      ...modelGroups,
+    ];
+  }, [modelGroups, combos.data]);
 
   const send = async () => {
     if (!prompt) return;
@@ -155,7 +127,7 @@ export default function Playground() {
               value={model}
               onChange={setModel}
               options={grouped}
-              filterOption={(input, opt) => String((opt as any)?.value ?? "").toLowerCase().includes(input.toLowerCase())}
+              filterOption={modelFilterOption}
             />
             <Switch checked={stream} onChange={setStream} checkedChildren="stream" unCheckedChildren="non-stream" />
           </Space>

@@ -1,22 +1,28 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Table, Button, Modal, Form, Input, Space, Tag, message, Popconfirm, Select } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import { api } from "../api/client";
+import { buildModelGroups, modelFilterOption } from "../utils/modelGroups";
 
 export default function Combos() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["combos"], queryFn: api.combos.list });
   const models = useQuery({ queryKey: ["models"], queryFn: api.models });
+  const configured = useQuery({ queryKey: ["providers"], queryFn: api.providers.list });
   const [open, setOpen] = useState(false);
   const [form] = Form.useForm();
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["combos"] });
 
-  const modelOptions = (models.data?.data as any[])?.map((m: any) => ({
-    value: m.id,
-    label: m.id,
-  })) || [];
+  const cfgSet = useMemo(
+    () => new Set((configured.data?.data as any[])?.map((p: any) => p.provider) ?? []),
+    [configured.data]
+  );
+  const modelGroups = useMemo(
+    () => buildModelGroups((models.data?.data as any[]) ?? [], cfgSet),
+    [models.data, cfgSet]
+  );
 
   const create = async (v: any) => {
     try {
@@ -85,8 +91,8 @@ export default function Combos() {
               mode="multiple"
               showSearch
               placeholder="gpt-4o → claude-sonnet-4 → gemini-2.5-flash"
-              options={modelOptions}
-              filterOption={(input, opt) => (opt?.value as string)?.toLowerCase().includes(input.toLowerCase())}
+              options={modelGroups}
+              filterOption={modelFilterOption}
             />
           </Form.Item>
         </Form>
