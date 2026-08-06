@@ -31,6 +31,11 @@ async function req<T>(path: string, opts: RequestInit = {}): Promise<T> {
     } catch {
       /* ignore */
     }
+    // 404 pada endpoint yang seharusnya ada = sidecar proxy masih binary
+    // LAMA (fitur baru belum masuk). Hint rebuild biar gak nebak-nebak.
+    if (res.status === 404) {
+      msg += " — sidecar proxy masih binary LAMA. Rebuild: cd rust-core && CARGO_BUILD_JOBS=1 cargo build --release -p omniroute-core --bin server && cp target/release/server ../src-tauri/binaries/omniroute-server-aarch64-apple-darwin";
+    }
     throw new Error(msg);
   }
   return res.json() as Promise<T>;
