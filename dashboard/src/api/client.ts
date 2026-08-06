@@ -21,6 +21,9 @@ async function req<T>(path: string, opts: RequestInit = {}): Promise<T> {
   };
   if (path.startsWith("/admin") && getAdminKey()) {
     headers["Authorization"] = `Bearer ${getAdminKey()}`;
+  } else if (!path.startsWith("/health") && getGatewayKey()) {
+    // /v1/* (models, chat, mcp, a2a...) butuh gateway key — kalau ada
+    headers["Authorization"] = `Bearer ${getGatewayKey()}`;
   }
   const res = await fetch(`${BASE}${path}`, { ...opts, headers });
   if (!res.ok) {

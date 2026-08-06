@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Card, Input, Button, Select, Space, Switch, Alert } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import { api, getGatewayKey, setGatewayKey } from "../api/client";
 
 export default function Playground() {
   const models = useQuery({ queryKey: ["models"], queryFn: api.models });
+  const combos = useQuery({ queryKey: ["combos"], queryFn: api.combos.list });
   const [model, setModel] = useState<string>("gpt-4o");
   const [prompt, setPrompt] = useState("");
   const [stream, setStream] = useState(false);
@@ -12,7 +13,28 @@ export default function Playground() {
   const [output, setOutput] = useState("");
   const [gwKey, setGwKey] = useState(getGatewayKey());
 
-  const modelOptions = (models.data?.data as any[])?.map((m: any) => ({ value: m.id, label: m.id })) || [];
+  // Grup per provider (owned_by) — parity playground asli yang filter
+  // model per provider. Combos juga bisa dipilih sebagai "model".
+  const grouped = useMemo(() => {
+    const byProvider = new Map<string, { value: string; label: string }[]>();
+    for (const m of (models.data?.data as any[]) ?? []) {
+      const owner = (m.owned_by as string) || "lainnya";
+      if (!byProvider.has(owner)) byProvider.set(owner, []);
+      byProvider.get(owner)!.push({ value: m.id, label: m.id });
+    }
+    const groups = [...byProvider.entries()].map(([provider, options]) => ({
+      label: provider,
+      options,
+    }));
+    const comboList = (combos.data?.data as any[]) ?? [];
+    if (comboList.length) {
+      groups.unshift({
+        label: "⚡ Combo",
+        options: comboList.map((c) => ({ value: c.name ?? c.id, label: `${c.name ?? c.id} (combo)` })),
+      });
+    }
+    return groups;
+  }, [models.data, combos.data]);
 
   const send = async () => {
     if (!prompt) return;
@@ -92,8 +114,8 @@ export default function Playground() {
               style={{ width: 320 }}
               value={model}
               onChange={setModel}
-              options={modelOptions}
-              filterOption={(input, opt) => (opt?.value as string)?.toLowerCase().includes(input.toLowerCase())}
+              options={grouped}
+              filterOption={(input, opt) => String((opt as any)?.value ?? "").toLowerCase().includes(input.toLowerCase())}
             />
             <Switch checked={stream} onChange={setStream} checkedChildren="stream" unCheckedChildren="non-stream" />
           </Space>
