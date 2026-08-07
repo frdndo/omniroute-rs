@@ -168,6 +168,7 @@ impl ComboEngine {
         &mut self,
         req: &ChatRequest,
         session_id: Option<&str>,
+        api_key_id: Option<&str>,
     ) -> Result<ComboResult, ComboError> {
         let mut candidates = self.candidates(&req.model);
         candidates = self.score_order(candidates);
@@ -271,6 +272,7 @@ impl ComboEngine {
                         started.elapsed().as_millis() as u64,
                         pt,
                         ct,
+                        api_key_id,
                     );
                     self.router.report(
                         &target.provider_id,
@@ -334,6 +336,7 @@ impl ComboEngine {
                         started.elapsed().as_millis() as u64,
                         0,
                         0,
+                        api_key_id,
                     );
                     // M4: webhook event on failed chat
                     if let Some(db) = &self.db {
@@ -433,6 +436,7 @@ impl ComboEngine {
         &mut self,
         req: &ChatRequest,
         session_id: Option<&str>,
+        #[allow(unused_variables)] api_key_id: Option<&str>,
     ) -> Result<StreamAttempt, ComboError> {
         let mut candidates = self.candidates(&req.model);
         candidates = self.score_order(candidates);
@@ -645,7 +649,7 @@ mod tests {
         let mut engine = ComboEngine::new(RoutingEngine::new(config))
             .with_fallback("gpt-4o", vec!["claude-sonnet-4".into()]);
         let err = engine
-            .execute(&test_request("gpt-4o"), None)
+            .execute(&test_request("gpt-4o"), None, None)
             .await
             .unwrap_err();
         // Both attempts recorded (network errors → fallback triggered)
@@ -658,7 +662,7 @@ mod tests {
         let mut engine = ComboEngine::new(RoutingEngine::new(RouterConfig::default()))
             .with_fallback("gpt-4o", vec!["deepseek-chat".into()]);
         let err = engine
-            .execute(&test_request("gpt-4o"), None)
+            .execute(&test_request("gpt-4o"), None, None)
             .await
             .unwrap_err();
         assert!(!err.attempts.is_empty());

@@ -125,6 +125,9 @@ pub fn run_migrations(conn: &Connection) -> Result<(), anyhow::Error> {
             [],
         )?;
     }
+    if !log_cols.iter().any(|c| c == "api_key_id") {
+        conn.execute("ALTER TABLE request_logs ADD COLUMN api_key_id TEXT", [])?;
+    }
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS pricing (
@@ -177,6 +180,16 @@ pub fn run_migrations(conn: &Connection) -> Result<(), anyhow::Error> {
             raw TEXT,
             updated_at TEXT NOT NULL DEFAULT (datetime('now')),
             PRIMARY KEY (provider, model_id)
+        );
+        -- v13: quota per API key (parity OmniRoute quota/limits)
+        CREATE TABLE IF NOT EXISTS quotas (
+            id TEXT PRIMARY KEY,
+            api_key_id TEXT NOT NULL,
+            unit TEXT NOT NULL DEFAULT 'tokens',   -- requests | tokens | usd
+            quota_limit REAL NOT NULL DEFAULT 0,
+            window TEXT NOT NULL DEFAULT 'daily',  -- hourly | daily | weekly | monthly
+            policy TEXT NOT NULL DEFAULT 'hard',   -- hard | soft
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
         ",
     )?;

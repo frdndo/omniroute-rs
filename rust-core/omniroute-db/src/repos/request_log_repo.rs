@@ -13,13 +13,64 @@ pub fn insert(
     model: Option<&str>,
     prompt_tokens: i64,
     completion_tokens: i64,
+    api_key_id: Option<&str>,
 ) -> Result<()> {
     conn.execute(
-        "INSERT INTO request_logs (ts, method, uri, status, duration_ms, provider, model, prompt_tokens, completion_tokens)
-         VALUES (datetime('now'), ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![method, uri, status, duration_ms, provider, model, prompt_tokens, completion_tokens],
+        "INSERT INTO request_logs (ts, method, uri, status, duration_ms, provider, model, prompt_tokens, completion_tokens, api_key_id)
+         VALUES (datetime('now'), ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![
+            method,
+            uri,
+            status,
+            duration_ms,
+            provider,
+            model,
+            prompt_tokens,
+            completion_tokens,
+            api_key_id
+        ],
     )?;
     Ok(())
+}
+
+/// Window offset modifier untuk SQLite datetime('now', <offset>).
+pub fn window_offset(window: &str) -> &'static str {
+    match window {
+        "hourly" => "-1 hour",
+        "weekly" => "-7 days",
+        "monthly" => "-1 month",
+        _ => "-1 day",
+    }
+}
+
+/// Usage per API key dalam window: {requests, tokens, cost_usd}.
+/// Cost dihitung dari tabel pricing (per provider+model), fallback 0.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct KeyUsage {
+    pub requests: i64,
+    pub tokens: i64,
+    pub cost_usd: f64,
+}
+
+pub fn usage_for_key(conn: &Connection, key_id: &str, window: &str) -> Result<KeyUsage> {
+    let offset = window_offset(window);
+    let sql = "SELECT COUNT(*),
+                COALESCE(SUM(rl.prompt_tokens + rl.completion_tokens), 0),
+                COALESCE(SUM(
+                    (rl.prompt_tokens / 1000000.0) * COALESCE(p.input_per_mtok, 0) +
+                    (rl.completion_tokens / 1000000.0) * COALESCE(p.output_per_mtok, 0)
+                ), 0)
+         FROM request_logs rl
+         LEFT JOIN pricing p ON p.provider = rl.provider AND p.model = rl.model
+         WHERE rl.api_key_id = ?1 AND rl.ts >= datetime('now', ?2)";
+    conn.query_row(sql, params![key_id, offset], |r| {
+        Ok(KeyUsage {
+            requests: r.get(0)?,
+            tokens: r.get(1)?,
+            cost_usd: r.get::<_, f64>(2)?,
+        })
+    })
+    .map_err(Into::into)
 }
 
 pub fn count_total(conn: &Connection) -> i64 {
@@ -179,9 +230,10 @@ mod tests {
             Some("gpt-4o"),
             1000,
             200,
+            None,
         )
         .unwrap();
-        insert(&c, "GET", "/health", 200, 1, None, None, 0, 0).unwrap();
+        insert(&c, "GET", "/health", 200, 1, None, None, 0, 0, None).unwrap();
         insert(
             &c,
             "POST",
@@ -192,6 +244,7 @@ mod tests {
             Some("gpt-4o"),
             500,
             50,
+            None,
         )
         .unwrap();
 

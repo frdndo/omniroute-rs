@@ -151,6 +151,7 @@ mod tests {
                 Some("gpt-4o"),
                 1_000_000,
                 500_000,
+                None,
             )
             .unwrap();
         }
@@ -176,6 +177,7 @@ mod tests {
                 Some("mystery-model"),
                 1000,
                 500,
+                None,
             )
             .unwrap();
         }

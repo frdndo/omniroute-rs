@@ -31,6 +31,8 @@ import BatchPage from "./pages/Batch";
 import Settings from "./pages/Settings";
 import Docs from "./pages/Docs";
 import Playground from "./pages/Playground";
+import Quotas from "./pages/Quotas";
+import Audit from "./pages/Audit";
 import { getAdminKey } from "./api/client";
 
 const { Sider, Content, Header } = Layout;
@@ -40,6 +42,7 @@ const MENU = [
   { key: "/providers", icon: <ApiOutlined />, label: "Providers" },
   { key: "/api-keys", icon: <KeyOutlined />, label: "API Keys" },
   { key: "/combos", icon: <LinkOutlined />, label: "Combos" },
+  { key: "/quotas", icon: <DollarOutlined />, label: "Quota" },
   { key: "/logs", icon: <FileTextOutlined />, label: "Logs" },
   { key: "/analytics", icon: <BarChartOutlined />, label: "Analytics" },
   { key: "/costs", icon: <DollarOutlined />, label: "Costs" },
@@ -48,6 +51,7 @@ const MENU = [
   { key: "/mcp", icon: <ApiOutlined />, label: "MCP" },
   { key: "/a2a", icon: <ApiOutlined />, label: "A2A" },
   { key: "/batch", icon: <PlayCircleOutlined />, label: "Batch" },
+  { key: "/audit", icon: <FileTextOutlined />, label: "Audit" },
   { key: "/settings", icon: <SettingOutlined />, label: "Settings" },
   { key: "/docs", icon: <ReadOutlined />, label: "Docs" },
   { key: "/playground", icon: <ExperimentOutlined />, label: "Playground" },
@@ -95,6 +99,7 @@ function Shell() {
             <Route path="/providers" element={<Providers />} />
             <Route path="/api-keys" element={<ApiKeys />} />
             <Route path="/combos" element={<Combos />} />
+            <Route path="/quotas" element={<Quotas />} />
             <Route path="/logs" element={<Logs />} />
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/costs" element={<Costs />} />
@@ -103,6 +108,7 @@ function Shell() {
             <Route path="/mcp" element={<McpPage />} />
             <Route path="/a2a" element={<A2aPage />} />
             <Route path="/batch" element={<BatchPage />} />
+            <Route path="/audit" element={<Audit />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/docs" element={<Docs />} />
             <Route path="/playground" element={<Playground />} />

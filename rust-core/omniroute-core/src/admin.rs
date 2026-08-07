@@ -768,6 +768,8 @@ pub fn admin_router(state: crate::proxy::AppState) -> Router {
         .route("/webhooks/{id}", put(update_webhook))
         .route("/webhooks/{id}", delete(delete_webhook))
         .route("/audit", get(list_audit))
+        .route("/quotas", get(list_quotas).post(create_quota))
+        .route("/quotas/{id}", delete(delete_quota))
         .route("/settings", get(handle_settings))
         .route("/cache", get(list_cache))
         .route("/cache", delete(clear_cache))
@@ -986,6 +988,100 @@ pub async fn list_audit(
     })
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(Json(json!({ "object": "list", "data": items })))
+}
+
+/// GET /admin/quotas — daftar quota + usage aktual per key per window.
+pub async fn list_quotas(
+    State(state): State<crate::proxy::AppState>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    with_db(&state, |c| {
+        let quotas = omniroute_db::repos::quota_repo::get_all(c).map_err(|e| e.to_string())?;
+        let keys = omniroute_db::repos::api_key_repo::get_all(c).map_err(|e| e.to_string())?;
+        let key_names: std::collections::HashMap<String, String> = keys
+            .iter()
+            .map(|k| (k.id.clone(), k.name.clone().unwrap_or_else(|| k.id.clone())))
+            .collect();
+        let rows: Vec<Value> = quotas
+            .iter()
+            .map(|q| {
+                let usage = omniroute_db::repos::request_log_repo::usage_for_key(
+                    c,
+                    &q.api_key_id,
+                    &q.window,
+                )
+                .unwrap_or(omniroute_db::repos::request_log_repo::KeyUsage {
+                    requests: 0,
+                    tokens: 0,
+                    cost_usd: 0.0,
+                });
+                let used = match q.unit.as_str() {
+                    "requests" => usage.requests as f64,
+                    "usd" => usage.cost_usd,
+                    _ => usage.tokens as f64,
+                };
+                json!({
+                    "id": q.id,
+                    "api_key_id": q.api_key_id,
+                    "key_name": key_names.get(&q.api_key_id).cloned().unwrap_or_default(),
+                    "unit": q.unit,
+                    "limit": q.limit,
+                    "window": q.window,
+                    "policy": q.policy,
+                    "created_at": q.created_at,
+                    "used": used,
+                    "used_pct": if q.limit > 0.0 { (used / q.limit) * 100.0 } else { 0.0 },
+                })
+            })
+            .collect();
+        serde_json::to_value(json!({ "object": "list", "data": rows })).map_err(|e| e.to_string())
+    })
+    .map(Json)
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
+}
+
+/// POST /admin/quotas — { api_key_id, unit, limit, window, policy }
+pub async fn create_quota(
+    State(state): State<crate::proxy::AppState>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let api_key_id = body["api_key_id"]
+        .as_str()
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "api_key_id wajib".to_string()))?;
+    let unit = body["unit"].as_str().unwrap_or("tokens").to_string();
+    if !["requests", "tokens", "usd"].contains(&unit.as_str()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "unit harus requests|tokens|usd".to_string(),
+        ));
+    }
+    let limit = body["limit"].as_f64().unwrap_or(0.0);
+    let window = body["window"].as_str().unwrap_or("daily").to_string();
+    if !["hourly", "daily", "weekly", "monthly"].contains(&window.as_str()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "window harus hourly|daily|weekly|monthly".to_string(),
+        ));
+    }
+    let policy = body["policy"].as_str().unwrap_or("hard").to_string();
+    let id = uuid::Uuid::new_v4().to_string();
+    with_db(&state, |c| {
+        omniroute_db::repos::quota_repo::create(c, &id, api_key_id, &unit, limit, &window, &policy)
+            .map_err(|e| e.to_string())
+    })
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(json!({ "ok": true, "id": id })))
+}
+
+/// DELETE /admin/quotas/{id}
+pub async fn delete_quota(
+    State(state): State<crate::proxy::AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let n = with_db(&state, |c| {
+        omniroute_db::repos::quota_repo::delete(c, &id).map_err(|e| e.to_string())
+    })
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(json!({ "ok": true, "deleted": n })))
 }
 
 // ── M5: Cache management ──────────────────────────────────────────────

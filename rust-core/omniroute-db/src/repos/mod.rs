@@ -4,6 +4,7 @@ pub mod combo_repo;
 pub mod pricing_repo;
 pub mod provider_connection_repo;
 pub mod provider_stats_repo;
+pub mod quota_repo;
 pub mod request_log_repo;
 pub mod session_affinity_repo;
 pub mod settings_repo;

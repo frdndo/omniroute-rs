@@ -100,6 +100,13 @@ export const api = {
     remove: (id: string) => req<{ ok: boolean }>(`/admin/combos/${id}`, { method: "DELETE" }),
   },
   settings: () => req<any>("/admin/settings"),
+  quotas: {
+    list: () => req<{ data: any[] }>("/admin/quotas"),
+    create: (body: { api_key_id: string; unit: string; limit: number; window: string; policy: string }) =>
+      req<{ ok: boolean; id: string }>("/admin/quotas", { method: "POST", body: JSON.stringify(body) }),
+    remove: (id: string) => req<{ ok: boolean }>(`/admin/quotas/${id}`, { method: "DELETE" }),
+  },
+  audit: () => req<{ data: any[] }>("/admin/audit"),
   catalog: {
     list: (params?: { provider?: string; q?: string; limit?: number }) => {
       const qs = new URLSearchParams();
@@ -146,7 +153,6 @@ export const api = {
     create: (body: any) => req<{ id: string }>("/admin/webhooks", { method: "POST", body: JSON.stringify(body) }),
     remove: (id: string) => req<{ ok: boolean }>(`/admin/webhooks/${id}`, { method: "DELETE" }),
   },
-  audit: () => req<{ data: any[] }>("/admin/audit"),
   cache: {
     list: () => req<any>("/admin/cache"),
     clear: () => req<{ ok: boolean }>("/admin/cache", { method: "DELETE" }),

@@ -178,7 +178,7 @@ impl Mcp {
                 let session_id = args.get("session_id").and_then(|s| s.as_str());
 
                 let mut combo = state.combo.write().await;
-                let result = combo.execute(&req, session_id).await;
+                let result = combo.execute(&req, session_id, None).await;
                 drop(combo);
                 match result {
                     Ok(r) => {

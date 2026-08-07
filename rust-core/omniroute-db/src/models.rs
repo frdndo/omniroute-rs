@@ -1,5 +1,17 @@
 use serde::{Deserialize, Serialize};
 
+/// Quota per API key (v13).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Quota {
+    pub id: String,
+    pub api_key_id: String,
+    pub unit: String, // requests | tokens | usd
+    pub limit: f64,
+    pub window: String, // hourly | daily | weekly | monthly
+    pub policy: String, // hard | soft
+    pub created_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConnection {
     pub id: String,

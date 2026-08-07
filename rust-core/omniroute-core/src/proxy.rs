@@ -128,6 +128,41 @@ async fn handle_health(State(state): State<AppState>) -> Json<serde_json::Value>
     }))
 }
 
+/// Quota enforcement (v13) — hard limit per API key per window.
+/// Soft policy cuma dilaporkan via log, tidak memblokir.
+fn quota_check(state: &AppState, key_id: Option<&str>) -> Result<(), String> {
+    let Some(kid) = key_id else { return Ok(()) };
+    let Some(db) = &state.db else { return Ok(()) };
+    let Ok(conn) = db.conn.lock() else {
+        return Ok(());
+    };
+    let quotas = omniroute_db::repos::quota_repo::get_for_key(&conn, kid).unwrap_or_default();
+    for q in quotas {
+        let usage = omniroute_db::repos::request_log_repo::usage_for_key(&conn, kid, &q.window)
+            .unwrap_or(omniroute_db::repos::request_log_repo::KeyUsage {
+                requests: 0,
+                tokens: 0,
+                cost_usd: 0.0,
+            });
+        let used = match q.unit.as_str() {
+            "requests" => usage.requests as f64,
+            "usd" => usage.cost_usd,
+            _ => usage.tokens as f64,
+        };
+        if used >= q.limit {
+            let msg = format!(
+                "quota exceeded: {} {} limit ({}) untuk API key",
+                q.window, q.unit, q.limit
+            );
+            if q.policy == "hard" {
+                return Err(msg);
+            }
+            tracing::warn!("{msg} (soft)");
+        }
+    }
+    Ok(())
+}
+
 /// Chat completion handler — routes via combo engine with fallback.
 /// Honors `stream: true` by returning an SSE response.
 /// Reads `X-Session-Id` header for G3 session affinity.
@@ -140,13 +175,32 @@ async fn handle_chat(
         .get("x-session-id")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
+    // API key id (DB keys) — untuk quota per key. Env keys → None.
+    let api_key_id = {
+        let token = crate::auth::bearer_token(&headers);
+        state
+            .gateway_keys
+            .read()
+            .ok()
+            .and_then(|g| g.key_id_for_token(token.as_deref(), state.db.as_deref()))
+    };
+    if let Err(msg) = quota_check(&state, api_key_id.as_deref()) {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({
+                "error": { "message": msg, "type": "quota_exceeded", "code": 429 }
+            })),
+        ));
+    }
     if req.stream.unwrap_or(false) {
-        return handle_chat_stream(state, req, session_id.as_deref()).await;
+        return handle_chat_stream(state, req, session_id.as_deref(), api_key_id.as_deref()).await;
     }
 
     let mut combo = state.combo.write().await;
     // Telemetry context: provider/model diisi setelah route (dari result)
-    let result = combo.execute(&req, session_id.as_deref()).await;
+    let result = combo
+        .execute(&req, session_id.as_deref(), api_key_id.as_deref())
+        .await;
     match result {
         Ok(result) => {
             let mut resp = crate::sanitize::sanitize_response(result.response);
@@ -162,9 +216,10 @@ async fn handle_chat_stream(
     state: AppState,
     req: ChatRequest,
     session_id: Option<&str>,
+    api_key_id: Option<&str>,
 ) -> Result<axum::response::Response, (StatusCode, Json<serde_json::Value>)> {
     let mut combo = state.combo.write().await;
-    let attempt = match combo.execute_stream(&req, session_id).await {
+    let attempt = match combo.execute_stream(&req, session_id, api_key_id).await {
         Ok(a) => a,
         Err(e) => return Err(combo_error_response(e)),
     };

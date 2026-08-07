@@ -44,11 +44,14 @@ impl Telemetry {
             None,
             0,
             0,
+            None,
         );
     }
 
     /// Record a chat call with provider/model + token usage (called by the
     /// combo engine). `status`: 200 success, else mapped error code.
+    /// `api_key_id`: gateway key yang dipakai (untuk quota per key).
+    #[allow(clippy::too_many_arguments)]
     pub fn record_chat(
         &self,
         provider: &str,
@@ -57,6 +60,7 @@ impl Telemetry {
         duration_ms: u64,
         prompt_tokens: i64,
         completion_tokens: i64,
+        api_key_id: Option<&str>,
     ) {
         let slot = match self.db.lock() {
             Ok(s) => s,
@@ -74,6 +78,7 @@ impl Telemetry {
             Some(model),
             prompt_tokens,
             completion_tokens,
+            api_key_id,
         );
     }
 

@@ -189,7 +189,7 @@ impl A2a {
                 };
 
                 let mut combo = state.combo.write().await;
-                let outcome = combo.execute(&req, None).await;
+                let outcome = combo.execute(&req, None, None).await;
                 drop(combo);
 
                 match outcome {

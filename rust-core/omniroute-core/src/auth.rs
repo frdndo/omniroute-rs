@@ -50,6 +50,23 @@ impl GatewayKeys {
         }
     }
 
+    /// Kembalikan api key id kalau token cocok dgn key DB (untuk quota);
+    /// None untuk env keys / invalid. Panggil setelah validate() true.
+    pub fn key_id_for_token(
+        &self,
+        token: Option<&str>,
+        db: Option<&omniroute_db::Database>,
+    ) -> Option<String> {
+        let t = token?;
+        let db = db?;
+        let conn = db.conn.lock().ok()?;
+        let items = omniroute_db::repos::api_key_repo::get_all(&conn).ok()?;
+        items
+            .into_iter()
+            .find(|k| k.is_active && k.key == t)
+            .map(|k| k.id)
+    }
+
     pub fn len(&self) -> usize {
         self.keys.len()
     }
