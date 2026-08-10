@@ -1,6 +1,6 @@
 [package]
 name = "omniroute-rs"
-version = "0.1.0"
+version = "0.2.0"
 description = "Smart AI provider router — desktop shell"
 edition = "2021"
 
