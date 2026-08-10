@@ -1,0 +1,49 @@
+name: release
+
+# Auto version bump + tag + GitHub Release setiap merge ke master.
+# Rules (lihat .github/scripts/bump-version.py): feat → minor, lainnya → patch.
+# Idempotent — NOOP kalau versi sudah di-tag / commit terakhir release.
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+
+jobs:
+  bump-tag-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Bump version
+        id: bump
+        run: |
+          OUT=$(python3 .github/scripts/bump-version.py)
+          echo "$OUT"
+          if echo "$OUT" | grep -q "^NOOP"; then
+            echo "noop=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$OUT" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit + tag
+        if: steps.bump.outputs.noop != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore(release): v${{ steps.bump.outputs.version }}"
+          git tag "v${{ steps.bump.outputs.version }}"
+          git push origin master
+          git push origin "v${{ steps.bump.outputs.version }}"
+
+      - name: GitHub Release
+        if: steps.bump.outputs.noop != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "v${{ steps.bump.outputs.version }}" --generate-notes
