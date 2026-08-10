@@ -33,6 +33,7 @@ import Docs from "./pages/Docs";
 import Playground from "./pages/Playground";
 import Quotas from "./pages/Quotas";
 import Audit from "./pages/Audit";
+import Endpoint from "./pages/Endpoint";
 import { getAdminKey } from "./api/client";
 
 const { Sider, Content, Header } = Layout;
@@ -52,6 +53,7 @@ const MENU = [
   { key: "/a2a", icon: <ApiOutlined />, label: "A2A" },
   { key: "/batch", icon: <PlayCircleOutlined />, label: "Batch" },
   { key: "/audit", icon: <FileTextOutlined />, label: "Audit" },
+  { key: "/endpoint", icon: <LinkOutlined />, label: "Endpoint" },
   { key: "/settings", icon: <SettingOutlined />, label: "Settings" },
   { key: "/docs", icon: <ReadOutlined />, label: "Docs" },
   { key: "/playground", icon: <ExperimentOutlined />, label: "Playground" },
@@ -109,6 +111,7 @@ function Shell() {
             <Route path="/a2a" element={<A2aPage />} />
             <Route path="/batch" element={<BatchPage />} />
             <Route path="/audit" element={<Audit />} />
+            <Route path="/endpoint" element={<Endpoint />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/docs" element={<Docs />} />
             <Route path="/playground" element={<Playground />} />

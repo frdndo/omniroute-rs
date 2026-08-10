@@ -770,6 +770,10 @@ pub fn admin_router(state: crate::proxy::AppState) -> Router {
         .route("/audit", get(list_audit))
         .route("/quotas", get(list_quotas).post(create_quota))
         .route("/quotas/{id}", delete(delete_quota))
+        .route(
+            "/auto-combo",
+            get(auto_combo_preview).post(auto_combo_create),
+        )
         .route("/settings", get(handle_settings))
         .route("/cache", get(list_cache))
         .route("/cache", delete(clear_cache))
@@ -1082,6 +1086,61 @@ pub async fn delete_quota(
     })
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(Json(json!({ "ok": true, "deleted": n })))
+}
+
+/// GET /admin/auto-combo?model=X — ranking provider + chain preview.
+pub async fn auto_combo_preview(
+    State(state): State<crate::proxy::AppState>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let model = params.get("model").ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "query param 'model' wajib".to_string(),
+        )
+    })?;
+    let (ranking, chain) = with_db(&state, |c| {
+        let ranking = crate::auto_combo::rank_providers_for_model(model, Some(c));
+        let chain = crate::auto_combo::suggest_chain(model, Some(c));
+        Ok((ranking, chain))
+    })
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(
+        json!({ "model": model, "ranking": ranking, "chain": chain }),
+    ))
+}
+
+/// POST /admin/auto-combo — { model } → buat combo `auto-{model}`.
+pub async fn auto_combo_create(
+    State(state): State<crate::proxy::AppState>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let model = body["model"]
+        .as_str()
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "field 'model' wajib".to_string()))?;
+    let combo = with_db(&state, |c| {
+        let existing = omniroute_db::repos::combo_repo::get_all(c).map_err(|e| e.to_string())?;
+        let name = format!("auto-{model}");
+        if existing.iter().any(|cm| cm.name == name) {
+            return Err(format!("combo '{name}' sudah ada"));
+        }
+        crate::auto_combo::create_combo_row(
+            c,
+            &|c, combo| {
+                omniroute_db::repos::combo_repo::insert(c, combo).map_err(|e| e.to_string())
+            },
+            model,
+        )
+    })
+    .map_err(|e| {
+        if e.contains("sudah ada") {
+            (StatusCode::CONFLICT, e)
+        } else {
+            (StatusCode::INTERNAL_SERVER_ERROR, e)
+        }
+    })?;
+    state.reload_accounts();
+    Ok(Json(json!({ "ok": true, "combo": combo })))
 }
 
 // ── M5: Cache management ──────────────────────────────────────────────

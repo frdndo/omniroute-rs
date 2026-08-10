@@ -2,6 +2,7 @@ pub mod a2a;
 pub mod account;
 pub mod admin;
 pub mod auth;
+pub mod auto_combo;
 pub mod batch;
 pub mod cache;
 pub mod chat;

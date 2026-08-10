@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Table, Button, Modal, Form, Input, Space, Tag, message, Popconfirm, Select } from "antd";
-import { PlusOutlined } from "@ant-design/icons";
+import { Table, Button, Modal, Form, Input, Space, Tag, message, Popconfirm, Select, Progress } from "antd";
+import { PlusOutlined, ExperimentOutlined } from "@ant-design/icons";
 import { api } from "../api/client";
 import { buildModelGroups, modelFilterOption } from "../utils/modelGroups";
 
@@ -11,7 +11,14 @@ export default function Combos() {
   const models = useQuery({ queryKey: ["models"], queryFn: api.models });
   const configured = useQuery({ queryKey: ["providers"], queryFn: api.providers.list });
   const [open, setOpen] = useState(false);
+  const [autoOpen, setAutoOpen] = useState(false);
+  const [autoModel, setAutoModel] = useState<string>();
   const [form] = Form.useForm();
+  const autoPreview = useQuery({
+    queryKey: ["auto-combo", autoModel],
+    queryFn: () => api.autoCombo.preview(autoModel!),
+    enabled: !!autoModel,
+  });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["combos"] });
 
@@ -36,6 +43,19 @@ export default function Combos() {
     }
   };
 
+  const createAuto = async () => {
+    if (!autoModel) return;
+    try {
+      const r = await api.autoCombo.create(autoModel);
+      message.success(`Combo "${r.combo.name}" dibuat: ${r.combo.models.join(" → ")}`);
+      setAutoOpen(false);
+      setAutoModel(undefined);
+      invalidate();
+    } catch (e: any) {
+      message.error(e.message);
+    }
+  };
+
   const remove = async (id: string) => {
     await api.combos.remove(id);
     invalidate();
@@ -45,9 +65,14 @@ export default function Combos() {
     <div>
       <Space style={{ marginBottom: 12, justifyContent: "space-between", width: "100%" }}>
         <h3 style={{ margin: 0 }}>Combos (fallback chains)</h3>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
-          Buat Combo
-        </Button>
+        <Space>
+          <Button icon={<ExperimentOutlined />} onClick={() => setAutoOpen(true)}>
+            ⚡ Auto Combo
+          </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
+            Buat Combo
+          </Button>
+        </Space>
       </Space>
       <Table
         rowKey="id"
@@ -96,6 +121,71 @@ export default function Combos() {
             />
           </Form.Item>
         </Form>
+      </Modal>
+      <Modal
+        title="⚡ Auto Combo — ranked dari telemetry"
+        open={autoOpen}
+        onCancel={() => {
+          setAutoOpen(false);
+          setAutoModel(undefined);
+        }}
+        onOk={createAuto}
+        okText={`Buat combo auto-${autoModel ?? ""}`}
+        okButtonProps={{ disabled: !autoModel || autoPreview.isLoading }}
+        width={640}
+        destroyOnClose
+      >
+        <Select
+          showSearch
+          style={{ width: "100%", marginBottom: 12 }}
+          placeholder="Pilih model — ranking provider otomatis"
+          value={autoModel}
+          onChange={setAutoModel}
+          options={modelGroups}
+          filterOption={modelFilterOption}
+        />
+        {autoPreview.isLoading && <Progress percent={100} status="active" size="small" />}
+        {autoPreview.data && (
+          <div>
+            <Space style={{ marginBottom: 8 }}>
+              <Tag color="purple">Chain: {autoPreview.data.chain.join(" → ")}</Tag>
+            </Space>
+            <Table
+              rowKey="provider"
+              size="small"
+              pagination={false}
+              dataSource={autoPreview.data.ranking || []}
+              columns={[
+                {
+                  title: "#",
+                  width: 36,
+                  render: (_, __, i) => i + 1,
+                },
+                { title: "Provider", dataIndex: "provider", render: (v) => <Tag>{v}</Tag> },
+                { title: "Score", dataIndex: "score", width: 70, render: (v) => <b>{v.toFixed(2)}</b> },
+                {
+                  title: "Health",
+                  dataIndex: "health",
+                  width: 60,
+                  render: (v) => `${Math.round(v * 100)}%`,
+                },
+                { title: "Req", dataIndex: "requests", width: 60 },
+                {
+                  title: "Error",
+                  dataIndex: "error_rate",
+                  width: 70,
+                  render: (v) => <Tag color={v > 0.3 ? "red" : "green"}>{Math.round(v * 100)}%</Tag>,
+                },
+                { title: "Latency", dataIndex: "avg_duration_ms", width: 90, render: (v) => `${Math.round(v)}ms` },
+                {
+                  title: "Status",
+                  render: (_: any, r: any) =>
+                    r.connected ? <Tag color="blue">connected</Tag> : <Tag>noauth</Tag>,
+                },
+              ]}
+            />
+          </div>
+        )}
       </Modal>
     </div>
   );

@@ -1,6 +1,8 @@
 // API client for the omniroute-rs admin + gateway APIs.
 const BASE = (import.meta.env.VITE_PROXY_BASE as string) || "";
 
+export const apiBase = BASE;
+
 export function getAdminKey(): string {
   return localStorage.getItem("om_admin_key") || "";
 }
@@ -95,9 +97,14 @@ export const api = {
     remove: (id: string) => req<{ ok: boolean }>(`/admin/api-keys/${id}`, { method: "DELETE" }),
   },
   combos: {
-    list: () => req<{ data: Combo[] }>("/admin/combos"),
-    create: (body: any) => req<{ id: string }>("/admin/combos", { method: "POST", body: JSON.stringify(body) }),
+    list: () => req<{ data: any[] }>("/admin/combos"),
+    create: (body: any) => req<{ ok: boolean; combo: any }>("/admin/combos", { method: "POST", body: JSON.stringify(body) }),
     remove: (id: string) => req<{ ok: boolean }>(`/admin/combos/${id}`, { method: "DELETE" }),
+  },
+  autoCombo: {
+    preview: (model: string) => req<any>(`/admin/auto-combo?model=${encodeURIComponent(model)}`),
+    create: (model: string) =>
+      req<{ ok: boolean; combo: any }>("/admin/auto-combo", { method: "POST", body: JSON.stringify({ model }) }),
   },
   settings: () => req<any>("/admin/settings"),
   quotas: {
