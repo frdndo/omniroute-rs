@@ -3,6 +3,8 @@ name: release
 # Auto version bump + tag + GitHub Release setiap merge ke master.
 # Rules (lihat .github/scripts/bump-version.py): feat → minor, lainnya → patch.
 # Idempotent — NOOP kalau versi sudah di-tag / commit terakhir release.
+# Jalankan validasi yang sama dengan ci.yml (fmt/clippy/build/test)
+# SEBELUM bump — release cuma terjadi kalau semua check hijau.
 
 on:
   push:
@@ -12,10 +14,48 @@ permissions:
   contents: write
 
 jobs:
-  bump-tag-release:
+  validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin
+            rust-core/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust-core/Cargo.lock') }}
+
+      - name: Check fmt
+        run: cargo fmt --all --check
+        working-directory: rust-core
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+        working-directory: rust-core
+
+      - name: Build
+        run: cargo build --release
+        working-directory: rust-core
+
+      - name: Test
+        run: cargo test
+        working-directory: rust-core
+
+      - name: Audit
+        run: |
+          command -v cargo-audit || cargo install cargo-audit --locked
+          cargo audit
+        working-directory: rust-core
+
+  bump-tag-release:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
